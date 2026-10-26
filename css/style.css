@@ -87,3 +87,6 @@ details[open] summary { margin-bottom: 8px; }
 .toggle input { width: 22px; height: 22px; }
 #toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 18px); transform: translate(-50%, 30px); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; opacity: 0; transition: .25s; z-index: 30; font-size: .9rem; pointer-events: none; max-width: 90vw; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+.notice { display: flex; gap: 8px; align-items: flex-start; background: var(--chip); color: var(--muted); border-radius: 12px; padding: 9px 12px; font-size: .82rem; margin: 6px 0; }
+.notice span { flex: 1; } .notice button { color: var(--muted); font-size: 1rem; padding: 0 4px; }
