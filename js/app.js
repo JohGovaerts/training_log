@@ -21,7 +21,8 @@ const S = {
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
 };
-if (!S.settings.clientId && window.LOGAPP_CONFIG?.clientId) S.settings.clientId = window.LOGAPP_CONFIG.clientId;
+// A client-ID in config.js always wins over a value saved earlier in this browser.
+if (window.LOGAPP_CONFIG?.clientId?.trim()) S.settings.clientId = window.LOGAPP_CONFIG.clientId.trim();
 
 const save = {
   settings: () => LS.set('settings', S.settings),
@@ -222,7 +223,7 @@ async function sync() {
   } catch (e) {
     if (e instanceof Api.AuthError) setSync('login');
     else if (e instanceof Api.NetError) setSync(S.queue.length ? 'queued' : 'offline');
-    else if (e instanceof Api.ApiError) setSync('error', e.status === 403 ? 'Geen schrijfrechten op deze sheet.' : e.status === 404 ? 'Sheet of tabblad niet gevonden.' : e.message);
+    else if (e instanceof Api.ApiError) setSync('error', e.status === 403 ? `Geweigerd door Google (403): ${e.message}` : e.status === 404 ? 'Sheet of tabblad niet gevonden.' : e.message);
     else setSync('error', e.message);
   } finally {
     S.syncing = false;
