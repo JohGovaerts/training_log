@@ -1,0 +1,9 @@
+{
+  "name": "training-log",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "test": "node --test tests/sheet.test.mjs && node tests/e2e.cjs"
+  }
+}
