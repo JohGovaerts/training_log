@@ -17,6 +17,7 @@ export function dayIndex(s) {
 // Column header aliases (lowercase). Coach columns are read-only for the app.
 const ALIASES = {
   cycle: ['cycle', 'cyclus'], week: ['week'], dag: ['dag', 'day'], focus: ['focus'], piece: ['piece', 'onderdeel'],
+  benchmark: ['benchmark', 'pr test', 'test'],
   prescribed: ['prescribed'], intent: ['intent/target', 'intent', 'target'], demo: ['demo link', 'demo'],
   actual: ['actual'], splits: ['rep splits'], rpe: ['rpe'], badDay: ['bad day'],
   pain: ['pain notes'], notes: ['notes'],
@@ -74,10 +75,10 @@ export function buildColumnMap(headerRow) {
   return { map, newHeaders, missingReq };
 }
 
-const FIELDS = ['cycle', 'week', 'dag', 'focus', 'piece', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
+const FIELDS = ['cycle', 'week', 'dag', 'focus', 'piece', 'benchmark', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
   'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd'];
 
-export function parseRows(values, headerIdx, map) {
+export function parseRows(values, headerIdx, map, prefix = '') {
   const rows = [];
   const seen = new Map();
   for (let i = headerIdx + 1; i < values.length; i++) {
@@ -96,7 +97,7 @@ export function parseRows(values, headerIdx, map) {
     const base = `${week}|${r.dayIdx}|${piece}`;
     const occ = (seen.get(base) || 0) + 1;
     seen.set(base, occ);
-    r.key = `${base}|${occ}`;
+    r.key = `${prefix}${base}|${occ}`;
     rows.push(r);
   }
   return rows;
@@ -233,4 +234,11 @@ export function todayPosition(cycleStart, now = new Date()) {
   const diff = Math.round((t - m0) / 864e5);
   if (diff < 0) return null;
   return { week: Math.floor(diff / 7) + 1, dayIdx: diff % 7 };
+}
+
+// ---- cycle tabs (Sheet Contract v2: one workbook, one tab per cycle) -------
+
+export const cycleNum = (tab) => { const m = /^\s*cycle\s*(\d+)/i.exec(String(tab || '')); return m ? +m[1] : null; };
+export function cycleTabs(tabs) {
+  return (tabs || []).filter((t) => cycleNum(t) != null).sort((a, b) => cycleNum(b) - cycleNum(a));
 }
