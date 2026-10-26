@@ -17,6 +17,8 @@ const S = {
   drafts: LS.get('drafts', {}),         // unsaved form state per piece
   timers: LS.get('timers', { session: null, part: null }),
   dayBad: LS.get('dayBad', {}),
+  dismissed: LS.get('dismissed', {}),
+  missing: [], cycles: [],
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
@@ -31,6 +33,7 @@ const save = {
   drafts: () => LS.set('drafts', S.drafts),
   timers: () => LS.set('timers', S.timers),
   dayBad: () => LS.set('dayBad', S.dayBad),
+  dismissed: () => LS.set('dismissed', S.dismissed),
   view: () => LS.set('view', S.view),
 };
 
@@ -57,6 +60,8 @@ function rebuild() {
     if (cells) { Sh.applyCells(g, cells); S.pendingKeys.add(op.type === 'piece' ? op.key : dayKey(op.week, op.dayIdx)); }
   }
   S.rows = Sh.parseRows(g, hi, map);
+  S.missing = Sh.missingExpected(map);
+  S.cycles = [...new Set(S.rows.map((r) => r.cycle.trim()).filter(Boolean))];
 }
 
 const weeks = () => [...new Set(S.rows.map((r) => r.week))].sort((a, b) => a - b);
@@ -262,7 +267,16 @@ function mainHTML() {
   if (S.err) return topHTML() + `<div class="setup"><div class="err">${esc(S.err)}</div><button class="btn" data-act="settings">Instellingen</button></div>`;
   if (!S.rows.length) return topHTML() + `<div class="rest"><b>Nog geen planning geladen</b>${S.sync.state === 'login' ? 'Log in om de sheet te laden.' : 'Even geduld…'}</div>`;
   const { week, dayIdx } = S.view;
-  return topHTML() + sessionBannerHTML() + dayHTML(week, dayIdx);
+  return topHTML() + noticeHTML() + sessionBannerHTML() + dayHTML(week, dayIdx);
+}
+
+function noticeHTML() {
+  const msgs = [];
+  if (S.missing.length) msgs.push(`Sheet wijkt af van het contract: kolom ${S.missing.join(', ')} ontbreekt (de app werkt gewoon door).`);
+  if (S.cycles.length > 1) msgs.push(`Dit tabblad bevat meerdere cycli (${S.cycles.join(', ')}); de app toont ze door elkaar.`);
+  const key = `${S.settings.sheetId}|${msgs.join('|')}`;
+  if (!msgs.length || S.dismissed[key]) return '';
+  return `<div class="notice"><span>ℹ ${esc(msgs.join(' '))}</span><button data-act="dismiss" data-key="${esc(key)}" aria-label="Sluiten">✕</button></div>`;
 }
 
 function topHTML() {
@@ -283,7 +297,7 @@ function topHTML() {
       <button class="iconbtn" data-act="refresh" aria-label="Verversen">↻</button>
       <button class="iconbtn" data-act="settings" aria-label="Instellingen">⚙</button></div>
     ${S.view ? `<div class="weeknav"><button class="iconbtn" data-act="week" data-d="-1" ${week <= ws[0] ? 'disabled' : ''} aria-label="Vorige week">‹</button>
-      <div><b>Week ${week}</b><small>${range}</small></div>
+      <div><b>${S.cycles.length === 1 ? `Cycle ${esc(S.cycles[0])} · ` : ''}Week ${week}</b><small>${range}</small></div>
       <button class="iconbtn" data-act="week" data-d="1" ${week >= ws[ws.length - 1] ? 'disabled' : ''} aria-label="Volgende week">›</button></div>
     <nav class="days">${tabs}</nav>` : ''}
   </header>`;
@@ -456,6 +470,7 @@ $app.addEventListener('click', (e) => {
     case 'week': { const ws = weeks(); const i = ws.indexOf(S.view.week) + +b.dataset.d; if (ws[i] != null) { S.view.week = ws[i]; S.editSession = false; save.view(); render(); } break; }
     case 'toggle': { const it = currentItem(key); const firstOpen = rowsOf(it.week, it.dayIdx).find((r) => Sh.status(r) === 'open'); const cur = S.open[key] ?? (firstOpen && firstOpen.key === key); S.open[key] = !cur; render(); break; }
     case 'close': S.open[key] = false; render(); break;
+    case 'dismiss': S.dismissed[key] = true; save.dismissed(); render(); break;
     case 'chip': pickChip(b); break;
     case 'save': commitPiece(key); break;
     case 'quick': { const d = ensureDraft(currentItem(key)); if (!d.actual.trim()) d.actual = 'Gedaan'; commitPiece(key); break; }

@@ -16,7 +16,7 @@ export function dayIndex(s) {
 
 // Column header aliases (lowercase). Coach columns are read-only for the app.
 const ALIASES = {
-  week: ['week'], dag: ['dag', 'day'], focus: ['focus'], piece: ['piece', 'onderdeel'],
+  cycle: ['cycle', 'cyclus'], week: ['week'], dag: ['dag', 'day'], focus: ['focus'], piece: ['piece', 'onderdeel'],
   prescribed: ['prescribed'], intent: ['intent/target', 'intent', 'target'], demo: ['demo link', 'demo'],
   actual: ['actual'], splits: ['rep splits'], rpe: ['rpe'], badDay: ['bad day'],
   pain: ['pain notes'], notes: ['notes'],
@@ -38,6 +38,15 @@ export function colLetter(i) {
 export function a1(tab, row, col) {
   return `'${String(tab).replace(/'/g, "''")}'!${colLetter(col)}${row}`;
 }
+
+// Sheet Contract v1: the columns the coach + athlete halves of the sheet should have.
+// (App-managed columns are added automatically, so they are not part of this check.)
+const EXPECTED = ['cycle', 'week', 'dag', 'focus', 'piece', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe', 'badDay', 'pain', 'notes'];
+export const CONTRACT_LABELS = {
+  cycle: 'Cycle', week: 'Week', dag: 'Dag', focus: 'Focus', piece: 'Piece', prescribed: 'Prescribed', intent: 'Intent/target',
+  demo: 'Demo link', actual: 'Actual', splits: 'Rep splits', rpe: 'RPE', badDay: 'Bad day', pain: 'Pain notes', notes: 'Notes',
+};
+export function missingExpected(map) { return EXPECTED.filter((k) => !(k in map)).map((k) => CONTRACT_LABELS[k]); }
 
 export function findHeader(values) {
   for (let i = 0; i < Math.min(values.length, 15); i++) {
@@ -65,7 +74,7 @@ export function buildColumnMap(headerRow) {
   return { map, newHeaders, missingReq };
 }
 
-const FIELDS = ['week', 'dag', 'focus', 'piece', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
+const FIELDS = ['cycle', 'week', 'dag', 'focus', 'piece', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
   'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd'];
 
 export function parseRows(values, headerIdx, map) {
