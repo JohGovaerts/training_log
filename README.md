@@ -6,8 +6,8 @@ Geen server, geen build: statische bestanden. Je data gaat alleen tussen je brow
 ## Wat doet hij
 
 - **Koppelt je Google Sheet** (plak de link, kies het tabblad). Kolommen worden op *kopnaam* herkend
-  (`Week · Dag · Focus · Piece · Prescribed · Intent/target · Demo link · Actual · Rep splits · RPE · Bad day · Pain notes · Notes`),
-  dus kolomvolgorde maakt niet uit.
+  (`Cycle · Week · Dag · Focus · Piece · Prescribed · Intent/target · Demo link · Actual · Rep splits · RPE · Bad day · Pain notes · Notes`),
+  dus kolomvolgorde maakt niet uit. De cyclus uit de `Cycle`-kolom staat boven de weekkiezer.
 - **Dag per dag**: weekkiezer + Ma–Zo. Dagen zonder rijen (zoals maandag) tonen als **Rustdag**. Vr/Zo-"Optioneel" krijgt een badge.
 - **Per onderdeel de juiste velden**: warm-up/mobility = één knop *Gedaan* (+ pijn/notitie), WOD = score + rep splits, kracht = gewicht + RPE (splits optioneel), cardio = afstand/tijd. Daarnaast steeds: RPE, slechte dag, pijn/knie, "dag erna" (voor knie-/schouderstukken) en notities.
 - **Schrijft naar de juiste cellen** en zet erbij:
@@ -21,6 +21,16 @@ Geen server, geen build: statische bestanden. Je data gaat alleen tussen je brow
 - **Timers (optioneel)**: *Start training* voor de hele sessie en een ⏱ per onderdeel (warm-up, oefening, WOD). Of vul tijden achteraf in. Uitzetten kan in Instellingen.
 - **Werkt in de gym zonder bereik**: wijzigingen komen in een wachtrij en worden verstuurd zodra je weer verbinding hebt. Het plan blijft offline zichtbaar, en half ingevulde formulieren blijven bewaard.
 - **Veilig voor je sheet**: bestaande cellen die jij of de coach tussendoor in de sheet aanpaste worden niet stilletjes overschreven (de app vraagt eerst). Rijen worden bij elk schrijven opnieuw opgezocht op Week + Dag + Piece, dus ingevoegde rijen geven geen verschuiving.
+
+## Sheet-contract v1 (voor elke nieuwe cyclus)
+
+De app leest de sheet op **kopnaam**. Elke "Cycle N — Training Log" heeft één tabblad, kopregel in rij 1 en deze kolommen in deze volgorde:
+
+`Cycle · Week · Dag · Focus · Piece · Prescribed · Intent/target · Demo link` (door de coach) ·
+`Actual · Rep splits · RPE · Bad day · Pain notes · Notes` (door jou, via de app) ·
+`Gelogd op · Start · Einde · Duur (min) · Sessie start · Sessie einde` (door de app)
+
+`Cycle` is het cyclusnummer op elke rij; `Dag` is Ma/Di/Wo/Do/Vr/Za/Zo; een rustdag heeft geen rijen. Wijkt een sheet af (bv. de oude Cycle 2 zonder `Cycle`-kolom), dan werkt de app gewoon door en toont hij een klein, wegklikbaar bericht. Dezelfde afspraak staat in de projectinstructies (v3), zodat Claude nieuwe sheets er altijd zo opzet en controleert.
 
 ## Eenmalig instellen (±5 min)
 
