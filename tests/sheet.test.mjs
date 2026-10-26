@@ -87,3 +87,17 @@ test('pain split/join', () => {
   assert.equal(S.joinPain('', 'ok'), 'Dag erna: ok'); assert.equal(S.joinPain('x', ''), 'x');
   assert.equal(S.normBad('No'), 'Neen'); assert.equal(S.normBad('Misschien '), 'Misschien'); assert.equal(S.normBad('--'), '');
 });
+
+test('contract v1: Cycle column parsed, missing columns reported', () => {
+  const cHeader = ['Cycle', 'Week', 'Dag', 'Focus', 'Piece', 'Prescribed', 'Intent/target', 'Demo link', 'Actual', 'Rep splits', 'RPE', 'Bad day', 'Pain notes', 'Notes',
+    'Gelogd op', 'Start', 'Einde', 'Duur (min)', 'Sessie start', 'Sessie einde'];
+  const { map, newHeaders } = S.buildColumnMap(cHeader);
+  assert.equal(map.cycle, 0); assert.equal(map.week, 1); assert.equal(map.actual, 8); assert.equal(map.sEnd, 19);
+  assert.equal(newHeaders.length, 0, 'contract sheet needs no extra columns');
+  assert.deepEqual(S.missingExpected(map), []);
+  const rows = S.parseRows([cHeader, [3, 1, 'Di', 'Squat', "Warm-up 10'", 'x']], 0, map);
+  assert.equal(rows[0].cycle, '3'); assert.equal(rows[0].week, 1);
+  // the old Cycle 2 sheet has no Cycle column -> reported, but everything else still works
+  const old = S.buildColumnMap(header);
+  assert.deepEqual(S.missingExpected(old.map), ['Cycle']);
+});

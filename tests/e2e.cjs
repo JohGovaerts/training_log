@@ -70,11 +70,13 @@ async function wait(fn, msg, ms = 6000) {
     localStorage.setItem('logapp.token', JSON.stringify({ t: 'tok', exp: Date.now() + 3600e3 }));
   }, { cycleStart, SHEET_ID, TAB });
 
+  async function mockGoogle(ctx) {
   await ctx.route('https://accounts.google.com/gsi/client', (r) => r.fulfill({ contentType: 'text/javascript', body:
     "window.google={accounts:{oauth2:{initTokenClient:(c)=>({requestAccessToken:()=>c.callback({access_token:'tok',expires_in:3600})}),revoke(){}}}};" }));
   await ctx.route('https://sheets.googleapis.com/**', async (route) => {
     const req = route.request(); const u = new URL(req.url());
     if (mock.fail) return route.abort('failed');
+    if (mock.fail403) return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: { code: 403, message: 'Google Sheets API has not been used in project 123 before or it is disabled.' } }) });
     const json = (o) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(o) });
     if (req.headers()['authorization'] !== 'Bearer tok') return route.fulfill({ status: 401, body: '{"error":{"message":"no"}}' });
     if (u.pathname.endsWith(':batchUpdate')) {
@@ -97,6 +99,8 @@ async function wait(fn, msg, ms = 6000) {
     }
     return json({ properties: { title: 'Cycle 2 — Training Log' }, sheets: [{ properties: { sheetId: 0, title: TAB } }] });
   });
+  }
+  await mockGoogle(ctx);
 
   page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -107,6 +111,9 @@ async function wait(fn, msg, ms = 6000) {
   await wait(() => grid[0][13] === 'Gelogd op', 'headers appended');
   assert.deepStrictEqual(grid[0].slice(13), ['Gelogd op', 'Start', 'Einde', 'Duur (min)', 'Sessie start', 'Sessie einde']);
   console.log('ok  loads plan + appends tracking columns');
+  assert((await page.textContent('.notice')).includes('Cycle'), 'old sheet: notice about missing Cycle column');
+  assert(!(await page.textContent('.weeknav')).includes('Cycle '), 'no cycle label without Cycle column');
+  console.log('ok  old-format sheet: works + shows a quiet "mist Cycle" notice');
 
   // 2. rest day (Monday has no rows) and day tabs
   await page.click('button.day[data-i="0"]');
@@ -212,6 +219,56 @@ async function wait(fn, msg, ms = 6000) {
   const real = errors.filter((e) => !/ERR_FAILED/.test(e)); // ERR_FAILED = the deliberate offline step
   assert.deepStrictEqual(real, [], 'no console errors: ' + real.join(' | '));
   console.log('ok  no console errors');
+  // 10. client-ID from config.js is prefilled, and beats a stale saved one
+  for (const saved of [null, 'oud-of-fout.apps.googleusercontent.com']) {
+    const c2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await c2.route('**/config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: "window.LOGAPP_CONFIG={clientId:'uit-config.apps.googleusercontent.com'};" }));
+    if (saved) await c2.addInitScript((id) => localStorage.setItem('logapp.settings', JSON.stringify({ clientId: id, sheetId: '', tab: '' })), saved);
+    const p2 = await c2.newPage(); await p2.goto(base);
+    assert.strictEqual(await p2.inputValue('#f-client'), 'uit-config.apps.googleusercontent.com');
+    await c2.close();
+  }
+  console.log('ok  client-ID from config.js prefilled (also over a stale saved value)');
+
+  // 11. a 403 from Google shows Google's real reason
+  mock.fail403 = true;
+  await page.click('[data-act="refresh"]');
+  await wait(async () => (await page.textContent('#chip')).includes('Geweigerd door Google'), '403 reason shown');
+  assert((await page.textContent('#chip')).includes('Sheets API has not been used'));
+  mock.fail403 = false;
+  console.log('ok  403 shows the real Google message');
+
+  // 12. Sheet Contract v1 sheet (Cycle column first, all tracking columns already present)
+  {
+    const CH = ['Cycle', 'Week', 'Dag', 'Focus', 'Piece', 'Prescribed', 'Intent/target', 'Demo link', 'Actual', 'Rep splits', 'RPE', 'Bad day', 'Pain notes', 'Notes',
+      'Gelogd op', 'Start', 'Einde', 'Duur (min)', 'Sessie start', 'Sessie einde'];
+    const body = [1, 2].flatMap((w) => [...di(w), ...wo(w), ...rest(w)]).map((r) => [3, r[0], r[1], r[2], r[3], r[4], r[5], r[6]]);
+    grid.splice(0, grid.length, CH, ...body);
+    const c3 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await c3.addInitScript(({ cycleStart, SHEET_ID, TAB }) => {
+      localStorage.setItem('logapp.settings', JSON.stringify({ clientId: 'test.apps.googleusercontent.com', sheetId: SHEET_ID, sheetTitle: 'Cycle 3 — Training Log', tab: TAB, cycleStart, timers: true }));
+      localStorage.setItem('logapp.token', JSON.stringify({ t: 'tok', exp: Date.now() + 3600e3 }));
+    }, { cycleStart, SHEET_ID, TAB });
+    await mockGoogle(c3);
+    const p3 = await c3.newPage();
+    const writesBefore = mock.writes;
+    await p3.goto(base);
+    await p3.waitForSelector('text=Cycle 3 · Week 2');
+    await p3.waitForTimeout(500);
+    assert.strictEqual(mock.writes, writesBefore, 'contract sheet: app must not write anything on load');
+    assert.strictEqual(await p3.locator('.notice').count(), 0, 'no contract warning');
+    await p3.click('button.day[data-i="1"]');
+    await p3.click('.piece:has-text("Warm-up") [data-act="quick"]');
+    const row = grid.findIndex((x) => x[1] === 2 && x[2] === 'Di' && x[4] === "Warm-up 10'") + 1;
+    await wait(() => (grid[row - 1][8] || '') === 'Gedaan', 'contract sheet: Actual written to column I');
+    assert.match(grid[row - 1][14], /^\d{4}-\d\d-\d\d \d\d:\d\d$/, 'Gelogd op in column O');
+    assert.strictEqual(grid[row - 1][0], 3, 'Cycle column untouched');
+    assert.strictEqual(grid[0].length, 20, 'no extra columns added');
+    await p3.screenshot({ path: path.join(OUT, '5-contract.png') });
+    await c3.close();
+    console.log('ok  contract v1 sheet: Cycle shown, nothing written on load, cells land in the right columns');
+  }
+
   await browser.close(); server.close();
   console.log('\nALL E2E CHECKS PASSED');
 })().catch(async (e) => { console.error('FAILED:', e.message); process.exit(1); });
