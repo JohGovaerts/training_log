@@ -18,7 +18,7 @@ Geen server, geen build: statische bestanden. Je data gaat alleen tussen je brow
   | `Start` / `Einde` / `Duur (min)` | optioneel, per onderdeel |
   | `Sessie start` / `Sessie einde` | optioneel, op alle rijen van die trainingsdag |
 
-- **Timers (optioneel)**: *Start training* voor de hele sessie en een ⏱ per onderdeel (warm-up, oefening, WOD). Of vul tijden achteraf in. Uitzetten kan in Instellingen.
+- **Timers (optioneel)**: *Start training* voor de hele sessie (die start ook meteen de timer van het eerste onderdeel) en een ⏱ per onderdeel (warm-up, oefening, WOD). Tik op de timer om te **pauzeren** (▶ hervat, de tijd blijft staan; een tik zet nooit terug op nul). **Opslaan** stopt de timer en bewaart start, einde en duur; daarna start de timer van het volgende onderdeel automatisch (uit te zetten in ⚙). Een gelogd onderdeel toont zijn duur, geen startknop meer. Nul zetten kan bewust via *Tijd → Timer op nul zetten*. Tijden achteraf invullen kan ook.
 - **Werkt in de gym zonder bereik**: wijzigingen komen in een wachtrij en worden verstuurd zodra je weer verbinding hebt. Het plan blijft offline zichtbaar, en half ingevulde formulieren blijven bewaard.
 - **Veilig voor je sheet**: bestaande cellen die jij of de coach tussendoor in de sheet aanpaste worden niet stilletjes overschreven (de app vraagt eerst). Rijen worden bij elk schrijven opnieuw opgezocht op Week + Dag + Piece, dus ingevoegde rijen geven geen verschuiving.
 
