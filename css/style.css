@@ -125,3 +125,6 @@ details[open] summary { margin-bottom: 8px; }
 .hist li span:first-child { color: var(--muted); font-size: .8rem; min-width: 6.4em; } .hist small { color: var(--muted); }
 .note { color: var(--muted); font-size: .85rem; margin: 8px 0 0; }
 .center { text-align: center; margin-top: 12px; }
+
+.tbtn.paused { background: var(--warn); color: var(--bg); font-weight: 700; }
+.tbtn.done { color: var(--ok); background: transparent; padding-right: 4px; }
