@@ -12,7 +12,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -147,7 +147,8 @@ function commitPiece(key, extra = {}) {
   const it = currentItem(key);
   if (!it) return;
   const d = ensureDraft(it);
-  if (S.timers.part?.key === key) stopPartTimer(false);
+  pausePartTimer(key, false);
+  const timed = !!(d.tAcc > 0);
   const fields = buildFields(it, d, extra);
   const hasContent = fields.actual || fields.rpe || fields.splits || fields.notes || fields.pain;
   if (!hasContent) { toast('Vul minstens een resultaat in, of kies Skip.'); return; }
@@ -160,39 +161,57 @@ function commitPiece(key, extra = {}) {
   rebuild(); render();
   toast('Opgeslagen ✓');
   kickSync(true);
+  if (timed && S.settings.timers && S.settings.autoNext) {
+    const rs = rowsOf(it.week, it.dayIdx);
+    const next = rs.slice(rs.findIndex((r) => r.key === key) + 1).find((r) => Sh.status(r) === 'open');
+    if (next) startPartTimer(next.key);
+  }
 }
 
+// Per-piece timer: start / pause / resume. The elapsed time lives in the draft (tAcc = ms
+// before the current run, tRun = start of the current run or 0), so a pause never loses anything.
+const elapsedMs = (d) => (d.tAcc || 0) + (d.tRun ? Date.now() - d.tRun : 0);
 function startPartTimer(key) {
-  if (S.timers.part) stopPartTimer(false);
+  const running = S.timers.part?.key;
+  if (running && running !== key) pausePartTimer(running, false);
   const it = currentItem(key); if (!it) return;
   const d = ensureDraft(it);
   const now = Date.now();
-  S.timers.part = { key, startMs: now };
-  d.start = Sh.fmtHM(now); d.end = ''; d.durMin = null;
+  if (!d.start) d.start = Sh.fmtHM(now);
+  d.end = ''; d.tRun = now;
+  S.timers.part = { key };
   S.open[key] = true;
   save.timers(); save.drafts(); render();
 }
-function stopPartTimer(doRender = true) {
-  const t = S.timers.part; if (!t) return;
-  const it = currentItem(t.key);
-  const now = Date.now();
-  if (it) {
-    const d = ensureDraft(it);
-    d.end = Sh.fmtHM(now);
-    d.durMin = Sh.round1((now - t.startMs) / 60000);
+function pausePartTimer(key, doRender = true) {
+  const d = S.drafts[key];
+  if (S.timers.part?.key === key) S.timers.part = null;
+  if (d && d.tRun) {
+    d.tAcc = elapsedMs(d); d.tRun = 0;
+    d.end = Sh.fmtHM(Date.now());
+    d.durMin = Sh.round1(d.tAcc / 60000);
   }
-  S.timers.part = null;
   save.timers(); save.drafts();
   if (doRender) render();
+}
+function resetPartTimer(key) {
+  const d = S.drafts[key]; if (!d) return;
+  if (S.timers.part?.key === key) S.timers.part = null;
+  d.tAcc = 0; d.tRun = 0; d.start = ''; d.end = ''; d.durMin = null;
+  save.timers(); save.drafts(); render();
 }
 
 function startSession() {
   S.timers.session = { startMs: Date.now(), tab: S.settings.tab, week: S.view.week, dayIdx: S.view.dayIdx };
   save.timers(); render();
+  if (S.settings.timers && S.settings.autoNext) {          // the first open piece starts its timer right away
+    const first = rowsOf(S.view.week, S.view.dayIdx).find((r) => Sh.status(r) === 'open');
+    if (first) startPartTimer(first.key);
+  }
 }
 function endSession() {
   const t = S.timers.session; if (!t) return;
-  if (S.timers.part) stopPartTimer(false);
+  if (S.timers.part) pausePartTimer(S.timers.part.key, false);
   S.queue.push({ type: 'session', tab: t.tab || S.settings.tab, week: t.week, dayIdx: t.dayIdx, fields: { sStart: Sh.fmtHM(t.startMs), sEnd: Sh.fmtHM(Date.now()) }, at: Date.now() });
   S.timers.session = null; save.timers(); save.queue();
   rebuild(); render(); toast('Training afgerond ✓'); kickSync(true);
@@ -446,7 +465,7 @@ function pieceHTML(it, open) {
   const st = Sh.status(it);
   const pending = S.pendingKeys.has(it.key);
   const label = pending ? '⏳ wacht op sync' : st === 'done' ? '✓ gelogd' : st === 'skipped' ? 'overgeslagen' : '';
-  const timerBtn = S.settings.timers ? partTimerBtn(it.key) : '';
+  const timerBtn = S.settings.timers ? partTimerBtn(it) : '';
   const summary = [it.actual, it.rpe && `RPE ${it.rpe}`, it.pain].filter(Boolean).join(' · ');
   const showDemo = /^https?:\/\//i.test(it.demo.trim());
   return `<article class="piece ${st} ${pending ? 'pending' : ''}" data-key="${esc(it.key)}">
@@ -460,10 +479,13 @@ function pieceHTML(it, open) {
     </div>${open ? formHTML(it) : ''}</article>`;
 }
 
-function partTimerBtn(key) {
-  const t = S.timers.part;
-  if (t && t.key === key) return `<button class="tbtn run" data-act="ptimer" data-key="${esc(key)}" aria-label="Stop timer">■ <span data-tick="part" data-since="${t.startMs}">00:00</span></button>`;
-  return `<button class="tbtn" data-act="ptimer" data-key="${esc(key)}" aria-label="Start timer">⏱</button>`;
+function partTimerBtn(it) {
+  const k = esc(it.key), d = S.drafts[it.key];
+  const tick = (acc, run) => `<span data-tick="part" data-acc="${acc}" data-run="${run}">00:00</span>`;
+  if (d && d.tRun) return `<button class="tbtn run" data-act="ptimer" data-key="${k}" aria-label="Pauzeer timer">⏸ ${tick(d.tAcc || 0, d.tRun)}</button>`;
+  if (d && d.tAcc) return `<button class="tbtn paused" data-act="ptimer" data-key="${k}" aria-label="Hervat timer">▶ ${tick(d.tAcc, 0)}</button>`;
+  if (!d && Sh.status(it) !== 'open') return it.dur ? `<span class="tbtn done" title="Gelogde duur">✓ ${esc(it.dur)} min</span>` : '';
+  return `<button class="tbtn" data-act="ptimer" data-key="${k}" aria-label="Start timer">⏱</button>`;
 }
 
 function formHTML(it) {
@@ -484,7 +506,8 @@ function formHTML(it) {
     ${wantsAfter ? `<label>Dag erna (knie/schouder)<input data-f="after" value="${esc(d.after)}" placeholder="vul morgen aan" autocomplete="off"></label>` : ''}
     ${cfg.notes ? `<label>Notities<textarea rows="2" data-f="notes">${esc(d.notes)}</textarea></label>` : ''}
     ${S.settings.timers ? `<details ${d.start || d.end ? 'open' : ''}><summary>Tijd${dur != null ? ` · ${dur} min` : ' (optioneel)'}</summary>
-      <div class="row2"><label>Start<input type="time" data-f="start" value="${esc(d.start)}"></label><label>Einde<input type="time" data-f="end" value="${esc(d.end)}"></label></div></details>` : ''}
+      <div class="row2"><label>Start<input type="time" data-f="start" value="${esc(d.start)}"></label><label>Einde<input type="time" data-f="end" value="${esc(d.end)}"></label></div>
+      ${d.tAcc || d.tRun ? `<button type="button" class="btn link" data-act="treset" data-key="${k}">Timer op nul zetten</button>` : ''}</details>` : ''}
     <div class="actions"><button class="btn primary" data-act="save" data-key="${k}">Opslaan</button>
       <button class="btn" data-act="skip" data-key="${k}">Skip</button><button class="btn link" data-act="close" data-key="${k}">Sluiten</button></div>
   </div>`;
@@ -588,6 +611,7 @@ function settingsHTML(first) {
     <label>Maandag van week 1 (voor dit tabblad)<input type="date" id="f-start" value="${esc((s.cycleStarts || {})[S.formTab || s.tab] || '')}"><span class="hint">Zo weet de app welke dag het vandaag is en toont hij datums. Elke cyclus heeft zijn eigen startdatum.</span></label>
     <label>Link naar je PR Ledger (optioneel)<input id="f-ledger" value="${esc(s.ledgerId ? `https://docs.google.com/spreadsheets/d/${s.ledgerId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"><span class="hint">Voor de Records-pagina en de laatste score per onderdeel. Alleen lezen.</span></label>
     <label class="toggle"><input type="checkbox" id="f-timers" ${s.timers ? 'checked' : ''}> Timers (sessie en per onderdeel)</label>
+    <label class="toggle"><input type="checkbox" id="f-autonext" ${s.autoNext ? 'checked' : ''}> Volgende timer automatisch starten na opslaan</label>
     <button class="btn primary" data-act="settings-save">Opslaan</button>` : ''}
     ${!first ? '<button class="btn" data-act="settings-close">Terug</button><button class="btn link" data-act="logout">Uitloggen</button>' : ''}
   </div>`;
@@ -595,7 +619,11 @@ function settingsHTML(first) {
 }
 
 function tick() {
-  document.querySelectorAll('[data-tick]').forEach((el) => { el.textContent = Sh.fmtElapsed(Date.now() - Number(el.dataset.since)); });
+  document.querySelectorAll('[data-tick]').forEach((el) => {
+    const d = el.dataset;
+    const ms = d.acc !== undefined ? Number(d.acc) + (Number(d.run) ? Date.now() - Number(d.run) : 0) : Date.now() - Number(d.since);
+    el.textContent = Sh.fmtElapsed(ms);
+  });
 }
 setInterval(tick, 1000);
 
@@ -608,6 +636,7 @@ function readSettingsForm() {
   if (g('f-start')) S.settings.cycleStarts = { ...(S.settings.cycleStarts || {}), [S.formTab || S.settings.tab]: g('f-start').value };
   if (g('f-tab')) S.formTab = g('f-tab').value;
   if (g('f-timers')) S.settings.timers = g('f-timers').checked;
+  if (g('f-autonext')) S.settings.autoNext = g('f-autonext').checked;
 }
 
 async function connect() {
@@ -670,7 +699,8 @@ $app.addEventListener('click', (e) => {
     case 'save': commitPiece(key); break;
     case 'quick': { const d = ensureDraft(currentItem(key)); if (!d.actual.trim()) d.actual = 'Gedaan'; commitPiece(key); break; }
     case 'skip': { const d = ensureDraft(currentItem(key)); d.actual = 'Skip'; commitPiece(key); break; }
-    case 'ptimer': S.timers.part?.key === key ? stopPartTimer() : startPartTimer(key); break;
+    case 'ptimer': S.drafts[key]?.tRun ? pausePartTimer(key) : startPartTimer(key); break;
+    case 'treset': resetPartTimer(key); break;
     case 'sess-start': startSession(); break;
     case 'sess-end': endSession(); break;
     case 'sess-edit': S.editSession = true; render(); break;
@@ -716,6 +746,12 @@ setInterval(() => { if (S.queue.length && S.sync.state !== 'login') sync(); }, 3
 (function boot() {
   if (S.grid && (S.grid.sheetId !== S.settings.sheetId || S.grid.tab !== S.settings.tab)) S.grid = null;
   rebuild();
+  if (S.timers.part && S.timers.part.startMs) {            // timer saved by the previous version
+    const { key, startMs } = S.timers.part; const it = currentItem(key);
+    S.timers.part = it ? { key } : null;
+    if (it) { const d = ensureDraft(it); d.tRun = startMs; d.tAcc = 0; save.drafts(); }
+    save.timers();
+  }
   initView();
   render();
   if (configured()) {
