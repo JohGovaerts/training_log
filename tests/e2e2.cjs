@@ -131,6 +131,31 @@ async function mockGoogle(ctx) {
   assert(!books[WB].tabs['Cycle 2'].some((r) => r[9] === '7:12'));
   console.log('ok  logging writes to the active cycle tab only');
 
+  // 3b. part timer: pause/resume keeps the time, a tap never resets, saving starts the next timer
+  {
+    const btn = (name) => page.locator(`.piece:has-text("${name}") .tbtn`);
+    const txt = async (name) => (await btn(name).textContent()).trim();
+    await btn('Grace').click();
+    assert((await txt('Grace')).startsWith('⏸'), 'running shows pause');
+    await page.waitForTimeout(1300);
+    await btn('Grace').click();
+    const paused = await txt('Grace');
+    assert(paused.startsWith('▶') && /00:0[1-9]/.test(paused), 'paused keeps elapsed time: ' + paused);
+    await page.waitForTimeout(1300);
+    assert.strictEqual(await txt('Grace'), paused, 'paused time does not move');
+    await btn('Grace').click();
+    await page.waitForTimeout(1100);
+    const resumed = await txt('Grace');
+    assert(resumed.startsWith('⏸') && !resumed.includes('00:00') && resumed >= paused.replace('▶', '⏸'), 'resume continues, no reset: ' + resumed);
+    await page.fill('.piece:has-text("Grace") textarea[data-f="actual"]', '3:05');
+    await page.click('.piece:has-text("Grace") [data-act="save"]');
+    await wait(() => btn('Back squat').textContent().then((t) => t.trim().startsWith('⏸')), 'next piece timer auto-started');
+    assert.match((await txt('Grace')), /^✓ \d/, 'logged piece shows its duration, not a start button');
+    assert.strictEqual(await page.locator('.piece:has-text("Grace") .tbtn[data-act="ptimer"]').count(), 0, 'no accidental restart on a logged piece');
+    await btn('Back squat').click();   // pause it again so nothing keeps running
+    console.log('ok  timer: pause/resume, no reset on tap, next timer auto-starts after save');
+  }
+
   // 4. switch to Cycle 2: its own rows, own start date, drafts/keys do not collide
   await page.selectOption('#tabsel', 'Cycle 2');
   await page.waitForSelector('text=Cycle 2 · Week 1');

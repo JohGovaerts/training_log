@@ -165,6 +165,7 @@ async function wait(fn, msg, ms = 6000) {
   // 6. session timer -> all rows of the day
   await page.click('[data-act="sess-start"]');
   await page.waitForSelector('.banner');
+  await page.waitForSelector('.piece:has-text("Explosief") .tbtn.run');   // first open piece auto-timed
   await page.waitForTimeout(1100);
   await page.click('.banner [data-act="sess-end"]');
   await wait(() => cell(rowOf(2, 'Di', 'WOD'), 18) !== '', 'session end written');
