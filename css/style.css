@@ -128,3 +128,7 @@ details[open] summary { margin-bottom: 8px; }
 
 .tbtn.paused { background: var(--warn); color: var(--bg); font-weight: 700; }
 .tbtn.done { color: var(--ok); background: transparent; padding-right: 4px; }
+
+.calc { margin: .5rem 0; padding: .55rem .7rem; border-radius: 10px; background: rgba(255,106,43,.12); border: 1px solid rgba(255,106,43,.35); font-size: .95rem; line-height: 1.45; }
+.calc.warn { background: transparent; border-style: dashed; color: inherit; opacity: .8; font-size: .85rem; }
+.calc small { opacity: .9; }
