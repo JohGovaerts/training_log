@@ -84,3 +84,9 @@ node tests/e2e.cjs                 # echte browser + gemockte Google/Sheets-API
 node tests/e2e2.cjs                # tabs per cyclus, Records, vorige keer
 ```
 Bestanden: `js/sheet.js` (pure logica) · `js/records.js` (ledger, oordeel, betrouwbaarheid) · `js/api.js` (Google-login + Sheets) · `js/app.js` (UI) · `sw.js` (offline shell).
+
+## Gewichten uitrekenen
+Staat in "Prescribed" of "Intent/target" iets als `3x3 @ 90% van wk 1 triple`, dan zoekt de app hetzelfde onderdeel in week 1 van dit tabblad, neemt het zwaarste gelogde gewicht, rekent het percentage uit, rondt af op 1 kg en toont de plaatjes per kant (voor stangoefeningen). De stang (20 of 15 kg) stel je in via ⚙. Regels:
+- Alleen met een weekverwijzing (`wk 1`, `week 1`). `-10%` (t.o.v. je top van vandaag) en `@168kg (80%)` (kg staat er al) worden genegeerd.
+- Is die week niet gelogd, dan zie je een melding in plaats van een gewicht.
+- Beschikbare plaatjes: 25, 20, 15, 10, 5, 2,5, 2, 1,5, 1,25, 1 en 0,5 kg (aanpasbaar in `js/loading.js`).
