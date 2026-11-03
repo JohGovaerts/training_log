@@ -1,6 +1,7 @@
 import * as Sh from './sheet.js';
 import * as Api from './api.js';
 import * as Rec from './records.js';
+import * as Ld from './loading.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -12,7 +13,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -473,10 +474,24 @@ function pieceHTML(it, open) {
       <div class="pname">${esc(it.piece)} <span class="pstat">${label}</span></div></button>${timerBtn}</div>
     <div class="pbody"><div class="rx">${esc(it.prescribed)}</div>
       ${it.intent ? `<div class="intent">${esc(it.intent)}</div>` : ''}
+      ${calcHTML(it)}
       ${lastHTML(it)}
       ${showDemo ? `<a class="demo" href="${esc(it.demo.trim())}" target="_blank" rel="noopener">▶ Demo</a>` : ''}
       ${st !== 'open' && !open ? `<div class="result">${esc(summary || '—')}<small>${it.loggedAt ? `gelogd ${esc(it.loggedAt)}` : ''}${it.start ? ` · ${esc(it.start)}–${esc(it.end)}${it.dur ? ` (${esc(it.dur)} min)` : ''}` : ''}</small></div>` : ''}
     </div>${open ? formHTML(it) : ''}</article>`;
+}
+
+function calcHTML(it) {
+  const cs = Ld.calcsFor(it, S.rows, { bar: S.settings.barKg || 20 });
+  if (!cs.length) return '';
+  return cs.map((c) => {
+    if (c.missing) return `<div class="calc warn">🧮 ${c.pct}% van wk ${c.week}: ${esc(c.why)}</div>`;
+    const load = c.barbell
+      ? (c.belowBar ? `<small>Lichter dan de stang (${c.bar} kg).</small>`
+        : `<small>Stang ${c.bar} kg + per kant: <b>${c.perSide.length ? c.perSide.map(Ld.fmtKg).join(' · ') : 'niets'}</b>${c.exact ? '' : ` (dichtst haalbaar: ${Ld.fmtKg(c.loaded)} kg)`}</small>`)
+      : '';
+    return `<div class="calc">🧮 ${c.pct}% van wk ${c.week} (${Ld.fmtKg(c.refKg)} kg) = ${Ld.fmtKg(c.raw)} → <b>${Ld.fmtKg(c.target)} kg</b>${load ? `<br>${load}` : ''}</div>`;
+  }).join('');
 }
 
 function partTimerBtn(it) {
@@ -610,6 +625,7 @@ function settingsHTML(first) {
     ${connected ? `<label>Tabblad (cyclus)<select id="f-tab">${(S.tabs.length ? S.tabs : [s.tab]).map((t) => `<option ${t === (S.formTab || s.tab) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
     <label>Maandag van week 1 (voor dit tabblad)<input type="date" id="f-start" value="${esc((s.cycleStarts || {})[S.formTab || s.tab] || '')}"><span class="hint">Zo weet de app welke dag het vandaag is en toont hij datums. Elke cyclus heeft zijn eigen startdatum.</span></label>
     <label>Link naar je PR Ledger (optioneel)<input id="f-ledger" value="${esc(s.ledgerId ? `https://docs.google.com/spreadsheets/d/${s.ledgerId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"><span class="hint">Voor de Records-pagina en de laatste score per onderdeel. Alleen lezen.</span></label>
+    <label>Stang<select id="f-bar"><option value="20" ${+s.barKg !== 15 ? 'selected' : ''}>20 kg (man)</option><option value="15" ${+s.barKg === 15 ? 'selected' : ''}>15 kg (vrouw)</option></select><span class="hint">Voor de berekening van de plaatjes per kant.</span></label>
     <label class="toggle"><input type="checkbox" id="f-timers" ${s.timers ? 'checked' : ''}> Timers (sessie en per onderdeel)</label>
     <label class="toggle"><input type="checkbox" id="f-autonext" ${s.autoNext ? 'checked' : ''}> Volgende timer automatisch starten na opslaan</label>
     <button class="btn primary" data-act="settings-save">Opslaan</button>` : ''}
@@ -635,6 +651,7 @@ function readSettingsForm() {
   if (g('f-ledger')) { const v = g('f-ledger').value.trim(); S.settings.ledgerId = v ? Api.parseSheetId(v) : ''; }
   if (g('f-start')) S.settings.cycleStarts = { ...(S.settings.cycleStarts || {}), [S.formTab || S.settings.tab]: g('f-start').value };
   if (g('f-tab')) S.formTab = g('f-tab').value;
+  if (g('f-bar')) S.settings.barKg = +g('f-bar').value === 15 ? 15 : 20;
   if (g('f-timers')) S.settings.timers = g('f-timers').checked;
   if (g('f-autonext')) S.settings.autoNext = g('f-autonext').checked;
 }
