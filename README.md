@@ -109,3 +109,7 @@ Fouten (tegoed op, ongeldige sleutel, snelheidslimiet, overbelast, offline, eige
 
 ### Coach log
 Elke coach-reactie, elk weekoverzicht en elke toegepaste of teruggedraaide planwijziging komt als rij in het tabblad **Coach log** van je workbook (Datum, Soort, Over, Vraag, Antwoord, Voorstellen, Model). Je Claude-project kan die tab lezen, zodat wat in de app besproken is ook daar terug te vinden is. Offline of niet ingelogd: de rijen wachten op het toestel en worden later weggeschreven. Uit te zetten in ⚙ → Coach. De losse chatvragen worden niet gelogd.
+
+
+### Bevestiging bij elke coach-aanvraag
+Elke aanvraag aan de coach (reactie op de training, weekoverzicht, vraag) toont eerst een korte uitleg met aantal aanvragen en model. Pas na **Verstuur** gaat er iets naar de API; **Annuleer** verstuurt niets. Ook de automatische reactie na een afgeronde sessie vraagt eerst bevestiging.
