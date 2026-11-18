@@ -1207,6 +1207,10 @@ async function coachCall(userText, { history = false, maxTokens = 900, effort = 
     r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens, effort });
     S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
   }
+  if (!r.text && r.stop === 'max_tokens') {                    // all budget went to thinking: try once more with double room
+    r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens: Math.min(maxTokens * 2, 8000), effort });
+    S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
+  }
   save.coach();
   if (!r.text) throw new Co.CoachError(Co.emptyReplyError(r.stop));
   S.coach.err = null; save.coach();
@@ -1263,6 +1267,27 @@ async function coachReact(week, dayIdx) {
     logCoach(Co.logEntry({ soort: 'Sessie-reactie', over: `${Sh.DAYS[dayIdx]} W${week} (${S.settings.tab})`, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
     save.coach();
   } catch (e) { if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e); }
+  setBusy('');
+}
+
+// Follow-up question on a training: answer is shown under that day (and kept in the chat history for context).
+async function coachDayAsk(week, dayIdx) {
+  const k = dayKey(week, dayIdx), text = (S.coach.dayDraft || '').trim();
+  if (!text || S.coach.busy) return;
+  S.coach.chat.push({ role: 'user', content: text, label: '', shown: text, nImg: 0, at: Date.now() });
+  setBusy(`dayq:${k}`);
+  try {
+    const am = assistantMsg(await coachCall(text, { history: true, maxTokens: 3000 }));
+    S.coach.chat.push(am);
+    const r = S.coach.reactions[k] || (S.coach.reactions[k] = { text: '', props: 0, at: Date.now(), model: S.settings.coachModel });
+    (r.thread = r.thread || []).push({ q: text, a: am.content, props: am.props ? am.props.length : 0, at: Date.now() });
+    S.coach.dayDraft = '';
+    logCoach(Co.logEntry({ soort: 'Vraag', over: `${Sh.DAYS[dayIdx]} W${week} (${S.settings.tab})`, vraag: text, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
+    save.coach();
+  } catch (e) {
+    S.coach.chat.pop();                                      // question stays in the box, nothing lost
+    if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e);
+  }
   setBusy('');
 }
 
@@ -1470,7 +1495,11 @@ function coachDayHTML(week, dayIdx, rs) {
   const any = rs.some((x) => x.actual || x.loggedAt);
   let card = '';
   if (busy) card = '<div class="coachcard"><b>🧑‍🏫 Coach</b><p>Denkt na…</p></div>';
-  else if (r) card = `<div class="coachcard"><b>🧑‍🏫 Coach</b><div class="md">${Co.md(r.text)}</div>${r.props ? `<p><small>📝 ${r.props} voorstel(len) om het plan aan te passen — bekijk ze in de chat.</small></p>` : ''}<div class="actions"><button class="btn" data-act="coach-ask-day">${r.props ? 'Bekijk voorstel' : 'Vraag door'}</button><button class="btn link" data-act="coach-redo" ${blk.blocked ? 'disabled' : ''}>Opnieuw</button></div></div>`;
+  else if (r) {
+    const dbusy = S.coach.busy === `dayq:${k}`;
+    const thread = (r.thread || []).map((t) => `<div class="coachcard you"><b>🙋 Jij</b><p>${esc(t.q)}</p></div><div class="coachcard"><b>🧑‍🏫 Coach</b><div class="md">${Co.md(t.a)}</div>${t.props ? `<p><small>📝 ${t.props} voorstel(len) om het plan aan te passen — bekijk ze in de chat.</small></p>` : ''}</div>`).join('');
+    card = `<div class="coachcard"><b>🧑‍🏫 Coach</b><div class="md">${Co.md(r.text)}</div>${r.props ? `<p><small>📝 ${r.props} voorstel(len) om het plan aan te passen — bekijk ze in de chat.</small></p>` : ''}<div class="actions">${r.props ? '<button class="btn" data-act="coach-ask-day">Bekijk voorstel</button>' : ''}<button class="btn link" data-act="coach-redo" ${blk.blocked ? 'disabled' : ''}>Opnieuw</button></div></div>${thread}${dbusy ? '<div class="coachcard"><b>🧑‍🏫 Coach</b><p>Denkt na…</p></div>' : ''}${S.coach.err && S.coach.err.kind !== 'blocked' && !blk.blocked ? `<div class="err"><b>${esc(S.coach.err.title)}</b><br>${esc(S.coach.err.msg)}</div>` : ''}<div class="askbox dayask"><textarea id="dday" rows="2" placeholder="Vraag door over deze training…">${esc(S.coach.dayDraft || '')}</textarea><button class="btn" data-act="day-send" ${blk.blocked || dbusy ? 'disabled' : ''}>Stuur</button></div>`;
+  }
   else if (any && coachOn()) card = `<div class="coachcard"><b>🧑‍🏫 Coach</b>${S.coach.err && !blk.blocked ? `<p class="errline">${esc(S.coach.err.title)}</p>` : ''}<button class="btn" data-act="coach-redo" ${blk.blocked ? `disabled title="${esc(blk.reason)}"` : ''}>Coach-reactie op deze sessie</button>${blk.blocked ? `<small class="why2">${esc(blk.reason)}</small>` : ''}</div>`;
   return `${card}<div class="center"><button class="btn link" data-act="share" data-k="day">📤 Deel deze dag met je coach</button></div>`;
 }
@@ -1501,6 +1530,7 @@ function coachHTML() {
     <div class="chips"><button data-act="coach-chip" data-t="Leg uit hoe ik deze oefening uitvoer: ">Leg uit</button><button data-act="coach-chip" data-t="Maak een opbouw (ramp) naar ">Opbouw</button><button data-act="coach-chip" data-t="Welk alternatief heb ik bij pijn aan ">Alternatief</button></div>
  ${c.att.length ? `<div class="thumbs">${c.att.map((a, i) => `<span class="thumb"><img src="${a.thumb}" alt=""><button data-act="att-del" data-i="${i}" aria-label="Verwijder">✕</button>${a.kind === 'frame' ? `<small>${a.t}s</small>` : ''}</span>`).join('')}</div><p class="hintline">${c.att.length} beeld(en) gaan mee met je volgende vraag (±${Math.round(c.att.length * 0.8)}k tokens extra). Video: je coach ziet frames, geen snelheid.</p>` : ''}
     <label class="btn attach ${dis ? 'off' : ''}">📎 Foto of video<input id="cfile" type="file" accept="image/*,video/*" multiple hidden ${dis}></label>
+    ${c.err && c.err.kind !== 'blocked' ? `<div class="err"><b>${esc(c.err.title)}</b><br>${esc(c.err.msg)}</div>` : ''}
     <div class="askbox"><textarea id="cdraft" rows="12" placeholder="Vraag aan je coach…">${esc(c.draft)}</textarea><button class="btn primary" data-act="coach-send" ${dis}>Stuur</button></div>
     ${share}
     <details><summary>Wat de coach weet</summary>${know}</details>
@@ -1636,6 +1666,12 @@ $app.addEventListener('click', (e) => {
     case 'ask': { const it = currentItem(key); S.coach.draft = `Over "${it.piece}" (${it.prescribed}): `; S.page = 'coach'; render(); window.scrollTo(0, document.body.scrollHeight); document.getElementById('cdraft')?.focus(); coachLoad(); break; }
     case 'coach-day': askReact(S.view.week, S.view.dayIdx); break;
     case 'coach-redo': askReact(S.view.week, S.view.dayIdx); break;
+    case 'day-send': {
+      const t = (S.coach.dayDraft || '').trim(); if (!t) break;
+      const { week, dayIdx } = S.view;
+      askCall({ history: true, extraChars: t.length, title: 'Vraag stellen aan de coach?', body: `"${t.length > 160 ? t.slice(0, 160) + '…' : t}" De coach krijgt ook je profiel, geheugen en de huidige sessie mee. Het antwoord komt onder deze training.`, run: () => coachDayAsk(week, dayIdx) });
+      break;
+    }
     case 'coach-ask-day': S.coach.draft = ''; S.page = 'coach'; render(); document.getElementById('cdraft')?.focus(); coachLoad(); break;
     case 'coach-week': askCall({ title: 'Weekoverzicht vragen?', body: `De coach leest alle sessies van week ${S.view.week} en maakt een overzicht. Daarna doet hij (2e aanvraag) een voorstel wat hij mag onthouden; dat bewaart pas als jij het goedkeurt.`, n: 2, extraChars: 4000, run: coachWeek }); break;
     case 'ask-go': { const r = S.ask && S.ask.run; S.ask = null; render(); if (r) r(); break; }
@@ -1671,6 +1707,7 @@ $app.addEventListener('change', (e) => {
 $app.addEventListener('input', (e) => {
   if (e.target.id === 'recq') { S.recQ = e.target.value; const el = document.getElementById('reclist'); if (el) el.innerHTML = recListHTML(); return; }
   if (e.target.id === 'cdraft') { S.coach.draft = e.target.value; return; }
+  if (e.target.id === 'dday') { S.coach.dayDraft = e.target.value; return; }
   const el = e.target; const f = el.dataset?.f; if (!f) return;
   const form = el.closest('[data-form]'); if (!form) return;
   const d = S.drafts[form.dataset.form]; if (!d) return;
