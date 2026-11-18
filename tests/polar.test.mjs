@@ -92,3 +92,20 @@ test('sleepAnswer', () => {
   assert.equal(P.sleepAnswer({ sleep: { score: 63 } }), 'Ok');
   assert.equal(P.sleepAnswer({ sleep: { score: 36 } }), 'Slecht');
 });
+
+test('tileWords', () => {
+  const day = { recharge: { status: 5, ansStatus: 3, hrv: 71, hrvBaseline: { avg: 90, n: 5 } }, sleep: { score: 81 } };
+  assert.deepEqual(P.tileWords(day), { recharge: 'hoog', ans: 'normaal', hrv: 'lager', sleep: 'hoog' });
+  assert.equal(P.tileWords({ recharge: { status: 3 } }).recharge, 'laag');
+  assert.equal(P.tileWords({ recharge: { status: 4 } }).recharge, 'normaal');
+  assert.equal(P.tileWords({ recharge: { ansStatus: 1 } }).ans, 'veel lager');
+  assert.equal(P.tileWords({ recharge: { ansStatus: 5 } }).ans, 'veel beter');
+  assert.equal(P.tileWords({ recharge: { hrv: 99, hrvBaseline: { avg: 90, n: 5 } } }).hrv, 'beter');
+  assert.equal(P.tileWords({ recharge: { hrv: 90, hrvBaseline: { avg: 90, n: 5 } } }).hrv, 'normaal');
+  assert.equal(P.tileWords({ recharge: { hrv: 50, hrvBaseline: null } }).hrv, null);                 // geen gemiddelde = geen oordeel
+  assert.equal(P.tileWords({ recharge: { hrv: 50, hrvBaseline: { avg: 90, n: 2 } } }).hrv, null);    // te weinig nachten
+  assert.equal(P.tileWords({ sleep: { score: 59 } }).sleep, 'laag');
+  assert.equal(P.tileWords({ sleep: { score: 72 } }).sleep, 'normaal');
+  assert.deepEqual(P.tileWords(null), { recharge: null, ans: null, hrv: null, sleep: null });
+  assert.ok(P.HELP.length === 5 && P.HELP.every(([a, b]) => a && b));
+});

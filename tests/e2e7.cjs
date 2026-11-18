@@ -122,7 +122,7 @@ async function mockGoogle(ctx) {
   const calls = [];
   let exercises = [];
   let sleep = { score: 81, asleepMin: 424 };
-  let recharge = { status: 5, ansCharge: -0.4, ansStatus: 3, hrv: 71, restHr: 48, breathing: 13.9 };
+  let recharge = { status: 5, ansCharge: -0.4, ansStatus: 3, hrv: 71, restHr: 48, breathing: 13.9, hrvBaseline: { avg: 90.4, n: 5 } };
   await ctx.route('https://polar.test.workers.dev/**', async (route) => {
     const req = route.request(); const u = new URL(req.url());
     calls.push({ path: u.pathname + u.search, key: req.headers()['x-app-key'] });
@@ -161,6 +161,14 @@ async function mockGoogle(ctx) {
   const okCard = await txt('.polarcard');
   assert(okCard.includes('Herstel vandaag: goed') && okCard.includes('5/6') && okCard.includes('-0,4') && okCard.includes('81') && okCard.includes('7u04'), 'groene kaart met cijfers: ' + okCard);
   assert(!okCard.includes('Overweeg'), 'geen hint bij goed herstel');
+  const words = await page.$$eval('.pc-t', (ts) => ts.map((t) => t.querySelector('b').textContent + '=' + (t.querySelector('em')?.textContent || '')));
+  assert.deepStrictEqual(words, ['5/6=hoog', '-0,4=normaal', '71=lager', '81=hoog'], 'woord per tegel: ' + words);
+  assert(await page.locator('.pc-help').count() === 0, 'uitleg standaard dicht');
+  await page.click('.pc-q');
+  const help = await txt('.pc-help');
+  assert(help.includes('Recharge') && help.includes('ANS charge') && help.includes('HRV') && help.includes('eigen gemiddelde'), 'uitleg open: ' + help);
+  await page.screenshot({ path: path.join(OUT, 'polar-help.png') });
+  await page.click('.pc-q'); assert(await page.locator('.pc-help').count() === 0, 'uitleg weer dicht');
   await page.screenshot({ path: path.join(OUT, 'polar-ok.png') });
   console.log('ok  Polar automatisch: herstel bewaard zonder tikken, groene kaart');
 
@@ -199,15 +207,28 @@ async function mockGoogle(ctx) {
   for (const r of today()) r[sheet()[0].indexOf('Polar')] = '';
   await setS({ readiness: true });
   await page.reload(); await page.waitForSelector('.readybar');
-  await wait(async () => (await txt('.readybar')).includes('Polar 81'), 'slaap uit Polar getoond');
-  assert(await page.locator('.readybar [data-k="sl"]').count() === 0, 'geen slaapknoppen als Polar het weet');
-  assert((await txt('.readybar')).includes('2 tikken'));
+  await wait(async () => (await txt('.readybar')).includes('voorgesteld door Polar (81)'), 'slaap voorgesteld door Polar');
+  assert(await page.locator('.readybar [data-k="sl"]').count() === 3, 'slaapknoppen blijven staan');
+  assert(await page.locator('.readybar [data-k="sl"][data-v="Goed"].on').count() === 1, 'Goed vooraf aangeduid');
   await page.click('.readybar [data-k="sp"][data-v="Matig"]'); await page.click('.readybar [data-k="st"][data-v="Laag"]');
   await page.click('.readybar [data-act="ready-save"]');
   await wait(() => sheet()[0].includes('Readiness'), 'kolom Readiness');
   const ri = sheet()[0].indexOf('Readiness');
   await wait(() => today()[0][ri] === 'Slaap goed · Spierpijn matig · Stress laag', 'readiness met slaap uit Polar: ' + today()[0][ri]);
-  console.log('ok  readiness: slaap uit Polar, 2 tikken');
+  console.log('ok  readiness: slaap vooraf ingevuld door Polar');
+
+  // aanpassen: eigen keuze wint van het Polar-voorstel
+  for (const r of today()) r[ri] = '';
+  await page.reload(); await page.waitForSelector('.readybar');
+  await wait(async () => (await txt('.readybar')).includes('voorgesteld door Polar'), 'voorstel zichtbaar');
+  await page.click('.readybar [data-k="sl"][data-v="Ok"]');
+  assert(await page.locator('.readybar [data-k="sl"][data-v="Ok"].on').count() === 1 && await page.locator('.readybar [data-k="sl"][data-v="Goed"].on').count() === 0, 'Ok nu aangeduid');
+  assert((await txt('.readybar')).includes('Polar stelde Goed voor (81)'));
+  await page.locator('.readybar').screenshot({ path: path.join(OUT, 'ready-polar.png') });
+  await page.click('.readybar [data-k="sp"][data-v="Geen"]'); await page.click('.readybar [data-k="st"][data-v="Matig"]');
+  await page.click('.readybar [data-act="ready-save"]');
+  await wait(() => today()[0][ri] === 'Slaap ok · Spierpijn geen · Stress matig', 'eigen slaapkeuze opgeslagen: ' + today()[0][ri]);
+  console.log('ok  readiness: je kunt het Polar-voorstel aanpassen');
 
   // zonder slaapdata van deze nacht: de vraag blijft
   for (const r of today()) r[ri] = '';
@@ -215,7 +236,7 @@ async function mockGoogle(ctx) {
   await page.reload(); await page.waitForSelector('.readybar');
   await new Promise((r) => setTimeout(r, 600));
   assert(await page.locator('.readybar [data-k="sl"]').count() === 3, 'slaapvraag blijft zonder Polar-slaap');
-  assert((await txt('.readybar')).includes('3 tikken'));
+  assert((await txt('.readybar')).includes('3 tikken') && !(await txt('.readybar')).includes('voorgesteld'));
   console.log('ok  readiness: zonder slaapdata blijft de slaapvraag staan');
   await setS({ readiness: false });
 
