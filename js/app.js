@@ -673,6 +673,14 @@ function recordsHTML() {
 }
 
 // ---------- readiness bij sessiestart ----------
+// Slaap komt uit Polar als er data van deze nacht is; anders blijft de vraag staan.
+function polarSleep() {
+  if (!Pl.configured(S.settings)) return null;
+  const e = S.polarDay[Pl.isoDate(new Date())];
+  const ans = e && Pl.sleepAnswer(e.data);
+  return ans ? { ans, score: e.data.sleep.score } : null;
+}
+const effReady = () => { const p = polarSleep(); return p ? { ...S.ready, sl: p.ans } : S.ready; };
 function readyBarHTML() {
   if (S.settings.readiness === false || !S.view || !S.rows.length) return '';
   const { week, dayIdx } = S.view, today = Sh.todayPosition(curStart());
@@ -680,16 +688,17 @@ function readyBarHTML() {
   const rs = rowsOf(week, dayIdx);
   if (!rs.length || rs.some((r) => r.readiness && r.readiness.trim()) || rs.some((r) => Sh.status(r) !== 'open')) return '';
   if (S.dismissed[`ready|${S.settings.tab}|${week}|${dayIdx}`]) return '';
-  const row = (k) => `<div class="lbl">${In.READY_LABELS[k]}<div class="chips">${In.READY_OPTS[k].map((v) => `<button type="button" data-act="ready-set" data-k="${k}" data-v="${v}" class="${S.ready[k] === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`;
-  return `<div class="painbar readybar"><b>Hoe sta je erbij vandaag?</b><small>3 tikken, de coach neemt het mee</small>${row('sl')}${row('sp')}${row('st')}
-    <div class="row2"><button class="btn primary" data-act="ready-save" ${In.readyComplete(S.ready) ? '' : 'disabled'}>Opslaan</button><button class="btn link" data-act="ready-skip">Overslaan</button></div></div>`;
+  const ps = polarSleep(), R = effReady();
+  const row = (k) => k === 'sl' && ps ? `<div class="lbl">Slaap<div class="hint">${ps.ans} (Polar ${ps.score})</div></div>` : `<div class="lbl">${In.READY_LABELS[k]}<div class="chips">${In.READY_OPTS[k].map((v) => `<button type="button" data-act="ready-set" data-k="${k}" data-v="${v}" class="${R[k] === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`;
+  return `<div class="painbar readybar"><b>Hoe sta je erbij vandaag?</b><small>${ps ? '2 tikken, slaap komt van Polar' : '3 tikken'}, de coach neemt het mee</small>${row('sl')}${row('sp')}${row('st')}
+    <div class="row2"><button class="btn primary" data-act="ready-save" ${In.readyComplete(R) ? '' : 'disabled'}>Opslaan</button><button class="btn link" data-act="ready-skip">Overslaan</button></div></div>`;
 }
 function readyAction(a, b) {
   if (a === 'ready-set') { S.ready[b.dataset.k] = S.ready[b.dataset.k] === b.dataset.v ? '' : b.dataset.v; render(); return; }
   const { week, dayIdx } = S.view;
   if (a === 'ready-skip') { S.dismissed[`ready|${S.settings.tab}|${week}|${dayIdx}`] = 1; save.dismissed(); render(); return; }
-  if (!In.readyComplete(S.ready)) return;
-  S.queue.push({ type: 'session', tab: S.settings.tab, week, dayIdx, fields: { readiness: In.readyText(S.ready) }, at: Date.now() });
+  if (!In.readyComplete(effReady())) return;
+  S.queue.push({ type: 'session', tab: S.settings.tab, week, dayIdx, fields: { readiness: In.readyText(effReady()) }, at: Date.now() });
   S.ready = { sl: '', sp: '', st: '' }; save.queue();
   rebuild(); render(); toast('Genoteerd ✓'); kickSync(true);
 }
@@ -751,13 +760,24 @@ function polarCardHTML(week, dayIdx, rs) {
   const t = Sh.todayPosition(curStart());
   if (!t || t.week !== week || t.dayIdx !== dayIdx) return '';
   const e = S.polarDay[Pl.isoDate(new Date())];
-  const lv = e && Pl.recoveryLevel(e.data);
+  if (!e) return '';
+  const ready = (rs.find((r) => r.readiness && r.readiness.trim()) || {}).readiness || '';
+  const lv = Pl.recoveryLevel(e.data, ready);
   if (!lv) return '';
-  const stored = rs.some((r) => r.polar && r.polar.trim());
-  if (lv.level === 'ok' && stored) return '';
-  const untouched = rs.every((r) => Sh.status(r) === 'open');
-  const hint = lv.level === 'low' && untouched ? `<small>Herstel onder je norm (${esc(lv.reasons.join(', '))}). Overweeg lager volume of een lager RPE-doel vandaag.</small>` : '';
-  return `<div class="polarcard ${lv.level}"><b>⌚ Herstel vandaag</b><div>${esc(Pl.recoveryText(e.data))}</div>${hint}</div>`;
+  const r = e.data.recharge, sl = e.data.sleep;
+  const dec = (n) => String(Math.round(n * 10) / 10).replace('.', ',');
+  const tile = (v, l) => `<div class="pc-t"><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+  const tiles = [
+    r && r.status != null ? tile(`${r.status}/6`, 'Recharge') : '',
+    r && r.ansCharge != null ? tile(`${r.ansCharge > 0 ? '+' : ''}${dec(r.ansCharge)}`, 'ANS charge') : '',
+    r && r.hrv != null ? tile(Math.round(r.hrv), 'HRV') : '',
+    sl && sl.score != null ? tile(sl.score, `Slaap${sl.asleepMin ? ` · ${Math.floor(sl.asleepMin / 60)}u${String(sl.asleepMin % 60).padStart(2, '0')}` : ''}`) : '',
+  ].join('');
+  const untouched = rs.every((r2) => Sh.status(r2) === 'open');
+  const why = lv.reasons.length ? ` (${esc(lv.reasons.join(', '))})` : '';
+  const hint = !untouched ? '' : lv.level === 'low' ? `<p class="pc-hint">Herstel onder je norm${why}. Overweeg lager volume of een lager RPE-doel vandaag.</p>`
+    : lv.level === 'mid' ? `<p class="pc-hint">Herstel wat onder je norm${why}. Bouw rustig op en kijk hoe de eerste sets voelen.</p>` : '';
+  return `<div class="polarcard ${lv.level}"><div class="pc-head"><span class="pc-dot"></span><b>Herstel vandaag: ${lv.label}</b><span class="pc-src">⌚ Polar</span></div><div class="pc-grid">${tiles}</div>${hint}</div>`;
 }
 async function polarTest() {
   readSettingsForm();

@@ -58,17 +58,33 @@ export function polarText(dayData, ex) {
   return parts.join(' · ').slice(0, 220);
 }
 
-/** Zacht oordeel over het herstel van die ochtend. Alleen 'low' of 'ok'; null zonder data. */
-export function recoveryLevel(dayData) {
+/**
+ * Oordeel over het herstel van vandaag: 'ok' (groen), 'mid' (oranje), 'low' (rood). null zonder data.
+ * Combineert Polar (Recharge, ANS, slaapscore) met je eigen readiness-antwoorden (tekst uit de sheet).
+ */
+export const LEVEL_LABEL = { ok: 'goed', mid: 'matig', low: 'laag' };
+export function recoveryLevel(dayData, readyText = '') {
   const r = dayData && dayData.recharge, s = dayData && dayData.sleep;
-  const reasons = [];
-  if (r && r.status != null && r.status <= 3) reasons.push(`Recharge ${r.status}/6`);
-  if (r && r.ansStatus != null && r.ansStatus <= 2) reasons.push('ANS ver onder je norm');
-  if (s && s.score != null && s.score < 50) reasons.push(`slaapscore ${s.score}`);
-  const has = (r && (r.status != null || r.ansStatus != null)) || (s && s.score != null);
+  const red = [], orange = [];
+  if (r && r.status != null) { if (r.status <= 2) red.push(`Recharge ${r.status}/6`); else if (r.status === 3) orange.push(`Recharge ${r.status}/6`); }
+  if (r && r.ansStatus != null) { if (r.ansStatus <= 1) red.push('ANS ver onder je norm'); else if (r.ansStatus === 2) orange.push('ANS onder je norm'); }
+  if (s && s.score != null) { if (s.score < 45) red.push(`slaapscore ${s.score}`); else if (s.score < 60) orange.push(`slaapscore ${s.score}`); }
+  const t = String(readyText || '').toLowerCase();
+  if (t.includes('spierpijn veel')) orange.push('veel spierpijn');
+  if (t.includes('stress hoog')) orange.push('hoge stress');
+  if (t.includes('slaap slecht') && !(s && s.score != null)) orange.push('slecht geslapen');
+  const has = (r && (r.status != null || r.ansStatus != null)) || (s && s.score != null) || /slaap |spierpijn |stress /.test(t);
   if (!has) return null;
-  return { level: reasons.length ? 'low' : 'ok', reasons };
+  const level = red.length || orange.length >= 2 ? 'low' : orange.length ? 'mid' : 'ok';
+  return { level, label: LEVEL_LABEL[level], reasons: [...red, ...orange] };
 }
 
 /** Alleen het herstel (zonder training), voor de kaart bovenaan. */
 export const recoveryText = (dayData) => polarText({ recharge: dayData && dayData.recharge, sleep: dayData && dayData.sleep }, null);
+
+/** Slaapantwoord voor de readiness-check, uit de slaapscore van Polar. null = geen data van deze nacht. */
+export function sleepAnswer(dayData) {
+  const s = dayData && dayData.sleep;
+  if (!s || s.score == null) return null;
+  return s.score >= 70 ? 'Goed' : s.score >= 50 ? 'Ok' : 'Slecht';
+}
