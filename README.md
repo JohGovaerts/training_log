@@ -90,3 +90,5 @@ Staat in "Prescribed" of "Intent/target" iets als `3x3 @ 90% van wk 1 triple`, d
 - Alleen met een weekverwijzing (`wk 1`, `week 1`). `-10%` (t.o.v. je top van vandaag) en `@168kg (80%)` (kg staat er al) worden genegeerd.
 - Is die week niet gelogd, dan zie je een melding in plaats van een gewicht.
 - Beschikbare plaatjes: 25, 20, 15, 10, 5, 2,5, 2, 1,5, 1,25, 1 en 0,5 kg (aanpasbaar in `js/loading.js`).
+
+Ook bij vaste gewichten (`@ 95 kg`, `(120-125 kg)`) en bij ramps (`60×5, 80×3, 100×2`) toont de app voor stangoefeningen de plaatjes per kant. `+20 kg` (extra gewicht), `van 160 kg` (basis) en oefeningen met dumbbell/kettlebell (Bulgarian split squat, goblet, lunge) worden overgeslagen.
