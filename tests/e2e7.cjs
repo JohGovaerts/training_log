@@ -121,6 +121,7 @@ async function mockGoogle(ctx) {
   await mockGoogle(ctx);
   const calls = [];
   let exercises = [];
+  let sleep = { score: 81, asleepMin: 424 };
   let recharge = { status: 5, ansCharge: -0.4, ansStatus: 3, hrv: 71, restHr: 48, breathing: 13.9 };
   await ctx.route('https://polar.test.workers.dev/**', async (route) => {
     const req = route.request(); const u = new URL(req.url());
@@ -131,7 +132,7 @@ async function mockGoogle(ctx) {
     if (u.pathname === '/api/ping') return route.fulfill({ headers: cors, contentType: 'application/json', body: '{"ok":true}' });
     return route.fulfill({ headers: cors, contentType: 'application/json', body: JSON.stringify({ date: u.searchParams.get('date'),
       recharge,
-      sleep: { score: 81, asleepMin: 424 }, activity: { steps: 1402 }, cardioLoad: null, exercises, errors: {} }) });
+      sleep, activity: { steps: 1402 }, cardioLoad: null, exercises, errors: {} }) });
   });
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -156,8 +157,12 @@ async function mockGoogle(ctx) {
   await wait(() => String(today()[0][ci]).startsWith('Recharge 5/6'), 'herstel automatisch opgeslagen');
   assert(!String(today()[0][ci]).includes('Training'), 'nog geen training');
   assert(calls.some((c) => c.path === `/api/day?date=${todayIso}`), 'juiste datum opgevraagd: ' + JSON.stringify(calls));
-  assert(await page.locator('.polarcard').count() === 0, 'geen kaart bij normaal herstel dat al bewaard is');
-  console.log('ok  Polar automatisch: herstel bewaard zonder tikken, geen kaart bij normaal herstel');
+  await page.waitForSelector('.polarcard.ok');
+  const okCard = await txt('.polarcard');
+  assert(okCard.includes('Herstel vandaag: goed') && okCard.includes('5/6') && okCard.includes('-0,4') && okCard.includes('81') && okCard.includes('7u04'), 'groene kaart met cijfers: ' + okCard);
+  assert(!okCard.includes('Overweeg'), 'geen hint bij goed herstel');
+  await page.screenshot({ path: path.join(OUT, 'polar-ok.png') });
+  console.log('ok  Polar automatisch: herstel bewaard zonder tikken, groene kaart');
 
   // --- met twee trainingen: de juiste (overlap met 14:00-15:00) wordt gekozen
   exercises = [
@@ -183,10 +188,36 @@ async function mockGoogle(ctx) {
   recharge = { status: 3, ansCharge: -6, ansStatus: 2, hrv: 40, restHr: 55, breathing: 14 };
   await page.reload(); await page.waitForSelector('.polarcard');
   const card = await txt('.polarcard');
-  assert(card.includes('Herstel onder je norm') && card.includes('Recharge 3/6') && card.includes('lager volume'), 'hint: ' + card);
+  assert(card.includes('Herstel vandaag: laag') && card.includes('Herstel onder je norm') && card.includes('Recharge 3/6') && card.includes('lager volume'), 'hint: ' + card);
   assert(await page.locator('.polarcard.low').count() === 1);
   await page.screenshot({ path: path.join(OUT, 'polar-low.png') });
   console.log('ok  Polar: laag herstel toont kaart met zachte hint');
+
+  // --- readiness: slaap komt uit Polar, de vraag blijft bij ontbrekende data
+  const setS = (o) => page.evaluate((o) => { const x = JSON.parse(localStorage.getItem('logapp.settings')); Object.assign(x, o); localStorage.setItem('logapp.settings', JSON.stringify(x)); }, o);
+  recharge = { status: 5, ansCharge: -0.4, ansStatus: 3, hrv: 71, restHr: 48, breathing: 13.9 };
+  for (const r of today()) r[sheet()[0].indexOf('Polar')] = '';
+  await setS({ readiness: true });
+  await page.reload(); await page.waitForSelector('.readybar');
+  await wait(async () => (await txt('.readybar')).includes('Polar 81'), 'slaap uit Polar getoond');
+  assert(await page.locator('.readybar [data-k="sl"]').count() === 0, 'geen slaapknoppen als Polar het weet');
+  assert((await txt('.readybar')).includes('2 tikken'));
+  await page.click('.readybar [data-k="sp"][data-v="Matig"]'); await page.click('.readybar [data-k="st"][data-v="Laag"]');
+  await page.click('.readybar [data-act="ready-save"]');
+  await wait(() => sheet()[0].includes('Readiness'), 'kolom Readiness');
+  const ri = sheet()[0].indexOf('Readiness');
+  await wait(() => today()[0][ri] === 'Slaap goed · Spierpijn matig · Stress laag', 'readiness met slaap uit Polar: ' + today()[0][ri]);
+  console.log('ok  readiness: slaap uit Polar, 2 tikken');
+
+  // zonder slaapdata van deze nacht: de vraag blijft
+  for (const r of today()) r[ri] = '';
+  sleep = null;
+  await page.reload(); await page.waitForSelector('.readybar');
+  await new Promise((r) => setTimeout(r, 600));
+  assert(await page.locator('.readybar [data-k="sl"]').count() === 3, 'slaapvraag blijft zonder Polar-slaap');
+  assert((await txt('.readybar')).includes('3 tikken'));
+  console.log('ok  readiness: zonder slaapdata blijft de slaapvraag staan');
+  await setS({ readiness: false });
 
   // --- verkeerde code → duidelijke fout
   await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('logapp.settings')); s.polarKey = 'fout'; localStorage.setItem('logapp.settings', JSON.stringify(s)); });

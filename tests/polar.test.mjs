@@ -63,10 +63,32 @@ test('sheet: polar is een lazy kolom die op elke rij van de dag landt', () => {
 test('recoveryLevel', () => {
   assert.equal(P.recoveryLevel(null), null);
   assert.equal(P.recoveryLevel({}), null);
-  assert.equal(P.recoveryLevel({ recharge: { status: 5, ansStatus: 3 }, sleep: { score: 81 } }).level, 'ok');
+  const ok = P.recoveryLevel({ recharge: { status: 5, ansStatus: 3 }, sleep: { score: 81 } });
+  assert.equal(ok.level, 'ok'); assert.equal(ok.label, 'goed'); assert.deepEqual(ok.reasons, []);
   const low = P.recoveryLevel({ recharge: { status: 3, ansStatus: 2 }, sleep: { score: 36 } });
   assert.equal(low.level, 'low'); assert.equal(low.reasons.length, 3);
-  assert.equal(P.recoveryLevel({ sleep: { score: 45 } }).level, 'low');
-  assert.equal(P.recoveryLevel({ recharge: { status: 4, ansStatus: 3 }, sleep: { score: 50 } }).level, 'ok');
+  assert.equal(P.recoveryLevel({ sleep: { score: 40 } }).level, 'low');          // slaap < 45 = rood
+  assert.equal(P.recoveryLevel({ sleep: { score: 50 } }).level, 'mid');          // 45-59 = oranje
+  assert.equal(P.recoveryLevel({ recharge: { status: 3, ansStatus: 4 }, sleep: { score: 80 } }).level, 'mid');
+  assert.equal(P.recoveryLevel({ recharge: { status: 3, ansStatus: 2 }, sleep: { score: 80 } }).level, 'low'); // 2 oranje = rood
+  assert.equal(P.recoveryLevel({ recharge: { status: 2, ansStatus: 4 }, sleep: { score: 80 } }).level, 'low');
+  assert.equal(P.recoveryLevel({ recharge: { status: 4, ansStatus: 3 }, sleep: { score: 60 } }).level, 'ok');
+  // eigen antwoorden tellen mee
+  const good = { recharge: { status: 5, ansStatus: 4 }, sleep: { score: 80 } };
+  assert.equal(P.recoveryLevel(good, 'Slaap goed · Spierpijn veel · Stress laag').level, 'mid');
+  assert.equal(P.recoveryLevel(good, 'Slaap goed · Spierpijn veel · Stress hoog').level, 'low');
+  assert.equal(P.recoveryLevel(good, 'Slaap goed · Spierpijn matig · Stress matig').level, 'ok');
+  assert.equal(P.recoveryLevel({}, 'Slaap slecht · Spierpijn geen · Stress laag').level, 'mid'); // zonder Polar: eigen antwoorden
+  assert.equal(P.recoveryLevel({ sleep: { score: 80 } }, 'Slaap slecht · Spierpijn geen · Stress laag').level, 'ok'); // Polar-slaap wint
   assert.equal(P.recoveryText({ recharge: { status: 5, ansCharge: -0.4 }, sleep: { score: 81, asleepMin: 424 }, exercises: [] }), 'Recharge 5/6 · ANS -0,4 · Slaap 81 (7u04)');
+});
+
+test('sleepAnswer', () => {
+  assert.equal(P.sleepAnswer(null), null);
+  assert.equal(P.sleepAnswer({}), null);
+  assert.equal(P.sleepAnswer({ sleep: null }), null);
+  assert.equal(P.sleepAnswer({ sleep: { score: 81 } }), 'Goed');
+  assert.equal(P.sleepAnswer({ sleep: { score: 70 } }), 'Goed');
+  assert.equal(P.sleepAnswer({ sleep: { score: 63 } }), 'Ok');
+  assert.equal(P.sleepAnswer({ sleep: { score: 36 } }), 'Slecht');
 });
