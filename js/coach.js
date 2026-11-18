@@ -3,7 +3,7 @@
 import * as Ld from './loading.js';
 import * as Sh from './sheet.js';
 
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 3;
 export const MODELS = {
   'claude-sonnet-5-5': { label: 'Sonnet 5.5 (aanbevolen)', inUsd: 2, outUsd: 10 },
   'claude-haiku-5-5': { label: 'Haiku 5.5 (goedkoper)', inUsd: 0.1, outUsd: 0.5 },
@@ -14,7 +14,7 @@ export const LOG_HEADER = ['Datum', 'Soort', 'Over', 'Vraag', 'Antwoord', 'Voors
 export const PROFILE_FIELDS = [
   ['Atleet', 'Leeftijd, gewicht, ervaring, werk/dagritme'],
   ['Doelen', 'Waar werk je naartoe? Wedstrijden?'],
-  ['Blessures & gezondheid', 'Wat moet de coach weten? Wat is vrijgegeven door fysio/arts?'],
+  ['Blessures & gezondheid', 'Wat moet de coach weten? Vrijgave door fysio/arts? Zwanger? Zet uitgerekende datum erbij (dd-mm-jjjj).'],
   ['Tijd & schema', 'Trainingsdagen en tijd per sessie'],
   ['Materiaal', 'Wat is er beschikbaar?'],
   ['Voorkeuren', 'Wat vind je leuk, hoe wil je dat de coach communiceert?'],
@@ -32,6 +32,7 @@ export function systemPrompt({ lang = 'nl', profile = [], memory = [], context =
     'Na een sessie: wat ging goed, één aandachtspunt, en welke aanpassing je voorstelt (of "geen aanpassing"). Voorstellen voor het programma zijn voorstellen: de atleet beslist, jij past niets zelf aan.',
     'Bij uitleg over oefeningen of opbouw (ramps): concreet, met sets × reps en percentages of RPE, en maximaal één cue per fout.',
     'Bij foto\'s of frames uit een video: je ziet geen snelheid of timing, alleen posities; zeg dat eerlijk. Geef één belangrijkste fout en één cue, bevestig of de standaard gehaald is, en vraag zo nodig een betere hoek of slow-motion.',
+    'Zwangerschap (staat in profiel of geheugen)? Dan gaat dit voor al het andere: de uitspraak van arts/vroedvrouw gaat voor het programma, geen maximale pogingen of PR\'s, stuur op RPE (zelf 2–3 reps in reserve), minder val-/impactrisico, geen zware buikbelasting, geen oververhitting. Bereken de zwangerschapsweek uit de uitgerekende datum en de datum van vandaag. Bij bloedverlies, vochtverlies, regelmatige pijnlijke weeën, pijn op de borst, ernstige hoofdpijn, duizeligheid of minder kindsbewegingen: meteen stoppen en arts/vroedvrouw bellen. Geen calorie- of gewichtsadvies. Verwijs voor de volledige zwangerschapsplanning naar het coach-project.',
     'Wil je het plan van een nog niet gelogd onderdeel wijzigen? Zet NA je uitleg een blok <voorstel>[{"week":3,"dag":"Za","piece":"exacte pieceNaam uit de context","prescribed":"nieuwe tekst","reden":"korte reden"}]</voorstel>. Alleen voor onderdelen die "(nog niet gelogd)" zijn, nooit voor vrijgaves, en alleen als het echt nodig is. De atleet keurt elk voorstel goed of af.',
   ] : [
     'You are an OPEX-inspired training coach inside one athlete\'s Training Log app. You coach long term: every cycle is a step in a continuous progression.',
@@ -42,6 +43,7 @@ export function systemPrompt({ lang = 'nl', profile = [], memory = [], context =
     'After a session: what went well, one point of attention, and which adjustment you propose (or "no adjustment"). Programme changes are proposals: the athlete decides, you change nothing yourself.',
     'When explaining exercises or build-ups (ramps): be concrete, with sets × reps and percentages or RPE, and at most one cue per fault.',
     'For photos or video frames: you see positions, not speed or timing, and you say so. Give the single most important fault and one cue, confirm whether the standard was met, and ask for a better angle or slow motion if needed.',
+    'Pregnancy (in profile or memory)? That overrides everything else: the doctor/midwife\'s advice beats the programme, no maximal attempts or PRs, steer on RPE (2–3 reps in reserve), less fall/impact risk, no heavy abdominal loading, avoid overheating. Compute the week of pregnancy from the due date and today\'s date. With bleeding, fluid leakage, regular painful contractions, chest pain, severe headache, dizziness or reduced fetal movement: stop at once and call the doctor/midwife. No calorie or weight advice. Refer to the coach project for full pregnancy planning.',
     'To change the plan of a piece that is not logged yet, put AFTER your explanation a block <voorstel>[{"week":3,"dag":"Za","piece":"exact piece name from the context","prescribed":"new text","reden":"short reason"}]</voorstel>. Only for pieces marked "(nog niet gelogd)", never for clearances, and only when really needed. The athlete approves or rejects every proposal.',
   ];
   const prof = profile.filter((p) => p.inhoud).map((p) => `- ${p.veld}: ${p.inhoud}`).join('\n');
@@ -49,6 +51,7 @@ export function systemPrompt({ lang = 'nl', profile = [], memory = [], context =
   return [
     rules.join('\n'),
     `${nl ? 'Regelversie' : 'Rules version'}: ${RULES_VERSION}`,
+    `${nl ? 'Vandaag' : 'Today'}: ${new Date().toISOString().slice(0, 10)}`,
     `## ${nl ? 'Profiel van de atleet' : 'Athlete profile'}\n${prof || (nl ? '(nog niet ingevuld)' : '(not filled in yet)')}`,
     `## ${nl ? 'Coachgeheugen' : 'Coach memory'}\n${mem || (nl ? '(nog leeg)' : '(empty)')}`,
     context ? `## ${nl ? 'Huidige cyclus' : 'Current cycle'}\n${context}` : '',

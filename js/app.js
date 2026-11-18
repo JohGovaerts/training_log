@@ -377,8 +377,18 @@ function renderSoft() { if (typing()) renderChip(); else render(); }
 
 function render() {
   if (!configured()) { $app.innerHTML = settingsHTML(true); return; }
-  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '');
+  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '') + askHTML();
   tick();
+}
+
+// Every API call to the coach is confirmed first: what is sent, how many requests, which model.
+function askCall({ title, body, n = 1, run }) {
+  if (S.coach.busy) return;
+  S.ask = { title, body, n, run }; render();
+}
+function askHTML() {
+  const a = S.ask; if (!a) return '';
+  return `<div class="sheetmodal askmodal"><div><h2>${esc(a.title)}</h2><p>${esc(a.body)}</p><p class="hint">${a.n} aanvraag${a.n > 1 ? 'en' : ''} naar de coach · ${esc(S.settings.coachModel)} · telt mee voor je maandlimiet.</p><div class="row2"><button class="btn" data-act="ask-no">Annuleer</button><button class="btn primary" data-act="ask-go">Verstuur</button></div></div></div>`;
 }
 
 function mainHTML() {
@@ -751,7 +761,10 @@ async function coachReact(week, dayIdx) {
 function maybeAutoReact(week, dayIdx) {
   if (!S.settings.coachAuto || !coachOn()) return;
   if (S.coach.reactions[dayKey(week, dayIdx)] || S.coach.busy || coachBlock().blocked) return;
-  if (Co.sessionDone(S.rows, week, dayIdx)) coachReact(week, dayIdx);
+  if (Co.sessionDone(S.rows, week, dayIdx)) askReact(week, dayIdx);
+}
+function askReact(week, dayIdx) {
+  askCall({ title: 'Reactie op de training vragen?', body: `De coach leest je sessie van ${Sh.DAYS[dayIdx]} week ${week} (plan, wat je logde, je profiel en geheugen) en geeft feedback.`, run: () => coachReact(week, dayIdx) });
 }
 
 async function coachWeek() {
@@ -971,7 +984,7 @@ function coachHTML() {
   const prop = c.memProposal ? `<div class="coachcard"><b>🧠 De coach wil dit onthouden</b>${c.memProposal.map((m) => `<p><small>${esc(m.status)}</small> <b>${esc(m.sectie)}</b>: ${esc(m.inhoud)}</p>`).join('')}<div class="actions"><button class="btn primary" data-act="mem-save">Bewaar</button><button class="btn" data-act="mem-drop">Negeer</button></div><small class="hint">Wijzigingen aan vrijgaves of blessures staan als "voorstel" tot jij ze bevestigt.</small></div>` : '';
   const know = (c.memory || []).map((m, i) => `<p><b>${esc(m.sectie)}</b> <small>${esc(m.bijgewerkt)}</small><br>${esc(m.inhoud)} <button class="btn link" data-act="mem-wrong" data-i="${i}">Dit klopt niet</button></p>`).join('') || '<p class="note">Nog niets onthouden. Na een weekoverzicht stelt de coach voor wat hij bewaart.</p>';
   const profVals = Object.fromEntries((c.profile || []).map((p) => [p.veld, p.inhoud]));
-  const profForm = Co.PROFILE_FIELDS.map(([v, hint], i) => `<label>${esc(v)}<textarea id="cp-${i}" rows="2" placeholder="${esc(hint)}">${esc(profVals[v] || '')}</textarea></label>`).join('');
+  const profForm = Co.PROFILE_FIELDS.map(([v, hint], i) => `<label>${esc(v)}<textarea id="cp-${i}" rows="8" placeholder="${esc(hint)}">${esc(profVals[v] || '')}</textarea></label>`).join('');
   return `<div class="coachpage">${banner}
     <div class="row2"><button class="btn" data-act="coach-day" ${dis} ${blk.blocked ? `title="${esc(blk.reason)}"` : ''}>Reactie op vandaag</button><button class="btn" data-act="coach-week" ${dis}>Weekoverzicht</button></div>
     ${blk.blocked && !(c.err && !(c.err.kind === 'blocked')) ? `<p class="hintline">${esc(blk.reason)}</p>` : ''}
@@ -980,7 +993,7 @@ function coachHTML() {
     <div class="chips"><button data-act="coach-chip" data-t="Leg uit hoe ik deze oefening uitvoer: ">Leg uit</button><button data-act="coach-chip" data-t="Maak een opbouw (ramp) naar ">Opbouw</button><button data-act="coach-chip" data-t="Welk alternatief heb ik bij pijn aan ">Alternatief</button></div>
  ${c.att.length ? `<div class="thumbs">${c.att.map((a, i) => `<span class="thumb"><img src="${a.thumb}" alt=""><button data-act="att-del" data-i="${i}" aria-label="Verwijder">✕</button>${a.kind === 'frame' ? `<small>${a.t}s</small>` : ''}</span>`).join('')}</div><p class="hintline">${c.att.length} beeld(en) gaan mee met je volgende vraag (±${Math.round(c.att.length * 0.8)}k tokens extra). Video: je coach ziet frames, geen snelheid.</p>` : ''}
     <label class="btn attach ${dis ? 'off' : ''}">📎 Foto of video<input id="cfile" type="file" accept="image/*,video/*" multiple hidden ${dis}></label>
-    <div class="askbox"><textarea id="cdraft" rows="2" placeholder="Vraag aan je coach…">${esc(c.draft)}</textarea><button class="btn primary" data-act="coach-send" ${dis}>Stuur</button></div>
+    <div class="askbox"><textarea id="cdraft" rows="12" placeholder="Vraag aan je coach…">${esc(c.draft)}</textarea><button class="btn primary" data-act="coach-send" ${dis}>Stuur</button></div>
     ${share}
     <details><summary>Wat de coach weet</summary>${know}</details>
     <details><summary>Mijn profiel</summary><div class="form" style="border:0;padding:0">${profForm}<button class="btn primary" data-act="prof-save">Profiel bewaren</button><button class="btn" data-act="coach-reload">↻ Opnieuw laden uit de sheet</button></div></details>
@@ -1087,11 +1100,18 @@ $app.addEventListener('click', (e) => {
     case 'share': shareWithCoach(b.dataset.k); break;
     case 'ramp': S.coach.ramp[key] = !S.coach.ramp[key]; render(); break;
     case 'ask': { const it = currentItem(key); S.coach.draft = `Over "${it.piece}" (${it.prescribed}): `; S.page = 'coach'; render(); window.scrollTo(0, document.body.scrollHeight); document.getElementById('cdraft')?.focus(); coachLoad(); break; }
-    case 'coach-day': coachReact(S.view.week, S.view.dayIdx).then(() => window.scrollTo(0, document.body.scrollHeight)); break;
-    case 'coach-redo': coachReact(S.view.week, S.view.dayIdx); break;
+    case 'coach-day': askReact(S.view.week, S.view.dayIdx); break;
+    case 'coach-redo': askReact(S.view.week, S.view.dayIdx); break;
     case 'coach-ask-day': S.coach.draft = ''; S.page = 'coach'; render(); document.getElementById('cdraft')?.focus(); coachLoad(); break;
-    case 'coach-week': coachWeek(); break;
-    case 'coach-send': coachSend(); break;
+    case 'coach-week': askCall({ title: 'Weekoverzicht vragen?', body: `De coach leest alle sessies van week ${S.view.week} en maakt een overzicht. Daarna doet hij (2e aanvraag) een voorstel wat hij mag onthouden; dat bewaart pas als jij het goedkeurt.`, n: 2, run: coachWeek }); break;
+    case 'ask-go': { const r = S.ask && S.ask.run; S.ask = null; render(); if (r) r(); break; }
+    case 'ask-no': S.ask = null; render(); break;
+    case 'coach-send': {
+      const t = (S.coach.draft || '').trim(), na = S.coach.att.length;
+      if (!t && !na) break;
+      askCall({ title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
+      break;
+    }
     case 'coach-retry': S.coach.err = null; render(); break;
     case 'coach-chip': S.coach.draft = (S.coach.draft ? `${S.coach.draft.trim()} ` : '') + b.dataset.t; render(); { const t = document.getElementById('cdraft'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } } break;
     case 'mem-save': saveMemory(S.coach.memProposal); break;
