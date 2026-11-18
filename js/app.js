@@ -3,6 +3,7 @@ import * as Api from './api.js';
 import * as Rec from './records.js';
 import * as Ld from './loading.js';
 import * as Co from './coach.js';
+import * as TU from './timerui.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -14,7 +15,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, tmSound: true, tmVol: 0.8, tmFlash: true, ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -162,6 +163,7 @@ function commitPiece(key, extra = {}) {
   S.queue.push({ type: 'piece', tab: S.settings.tab, key, fields, base: d.base, at: Date.now() });
   if (fields.badDay) { S.dayBad[dayKey(it.week, it.dayIdx)] = fields.badDay; save.dayBad(); }
   delete S.drafts[key]; save.drafts(); save.queue();
+  TU.resetSets(key);
   S.open[key] = false;
   rebuild(); render();
   toast('Opgeslagen ✓');
@@ -432,6 +434,7 @@ function topHTML() {
   const train = S.page === 'train';
   return `<header class="top">
     <div class="bar">${titleEl}<span id="chip">${syncChip()}</span>
+      <button class="iconbtn" data-tm="free" aria-label="Losse timer">⏲</button>
       <button class="iconbtn" data-act="refresh" aria-label="Verversen">↻</button>
       <button class="iconbtn" data-act="settings" aria-label="Instellingen">⚙</button></div>
     <div class="seg"><button class="${train ? 'on' : ''}" data-act="page" data-p="train">Training</button><button class="${S.page === 'records' ? 'on' : ''}" data-act="page" data-p="records">Records</button><button class="${S.page === 'coach' ? 'on' : ''}" data-act="page" data-p="coach">Coach</button></div>
@@ -651,6 +654,10 @@ function settingsHTML(first) {
     <label>Link naar je PR Ledger (optioneel)<input id="f-ledger" value="${esc(s.ledgerId ? `https://docs.google.com/spreadsheets/d/${s.ledgerId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"><span class="hint">Voor de Records-pagina en de laatste score per onderdeel. Alleen lezen.</span></label>
     <label>Stang<select id="f-bar"><option value="20" ${+s.barKg !== 15 ? 'selected' : ''}>20 kg (man)</option><option value="15" ${+s.barKg === 15 ? 'selected' : ''}>15 kg (vrouw)</option></select><span class="hint">Voor de berekening van de plaatjes per kant.</span></label>
     <label class="toggle"><input type="checkbox" id="f-timers" ${s.timers ? 'checked' : ''}> Timers (sessie en per onderdeel)</label>
+    <details><summary>Interval-timer (EMOM, AMRAP, For Time)</summary><div class="coachset">
+      <label class="toggle"><input type="checkbox" id="f-tmsound" ${s.tmSound !== false ? 'checked' : ''}> Geluid</label>
+      <label>Volume<input type="range" id="f-tmvol" min="0.1" max="1" step="0.1" value="${esc(s.tmVol ?? 0.8)}"></label>
+      <label class="toggle"><input type="checkbox" id="f-tmflash" ${s.tmFlash !== false ? 'checked' : ''}> Scherm flitst bij een signaal</label></div></details>
     <label class="toggle"><input type="checkbox" id="f-autonext" ${s.autoNext ? 'checked' : ''}> Volgende timer automatisch starten na opslaan</label>
     <details ${s.coachKey ? 'open' : ''}><summary>Coach (optioneel)</summary><div class="coachset">
       <label>Anthropic API-sleutel<input id="f-ckey" type="password" value="${esc(s.coachKey)}" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off"><span class="hint">Blijft alleen op dit toestel (en gaat enkel naar Anthropic). Zonder sleutel werkt de app volledig, behalve de coach.</span></label>
@@ -951,7 +958,7 @@ function pieceActionsHTML(it) {
   const ramp = Co.rampTarget(it, S.rows, { bar: S.settings.barKg || 20 }) ? `<button class="mini" data-act="ramp" data-key="${k}">🏋 Opbouw</button>` : '';
   const blk = coachBlock();
   const ask = `<button class="mini" data-act="ask" data-key="${k}" ${blk.blocked ? `disabled title="${esc(blk.reason)}"` : ''}>💬 Vraag coach</button>`;
-  return `<div class="pacts">${ramp}${ask}</div>${rampHTML(it)}`;
+  return `<div class="pacts">${TU.pieceButtons(it)}${ramp}${ask}</div>${rampHTML(it)}`;
 }
 
 function coachDayHTML(week, dayIdx, rs) {
@@ -1011,6 +1018,9 @@ function readSettingsForm() {
   if (g('f-bar')) S.settings.barKg = +g('f-bar').value === 15 ? 15 : 20;
   if (g('f-timers')) S.settings.timers = g('f-timers').checked;
   if (g('f-autonext')) S.settings.autoNext = g('f-autonext').checked;
+  if (g('f-tmsound')) S.settings.tmSound = g('f-tmsound').checked;
+  if (g('f-tmvol')) S.settings.tmVol = +g('f-tmvol').value || 0.8;
+  if (g('f-tmflash')) S.settings.tmFlash = g('f-tmflash').checked;
   if (g('f-ckey')) S.settings.coachKey = g('f-ckey').value.trim();
   if (g('f-cmodel')) S.settings.coachModel = g('f-cmodel').value;
   if (g('f-clang')) S.settings.coachLang = g('f-clang').value === 'en' ? 'en' : 'nl';
@@ -1068,6 +1078,7 @@ function pickChip(btn) {
 }
 
 $app.addEventListener('click', (e) => {
+  if (e.target.closest('[data-tm]')) { TU.click(e); return; }
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act, key = b.dataset.key;
   switch (act) {
@@ -1163,6 +1174,8 @@ setInterval(() => { if (S.queue.length && S.sync.state !== 'login') sync(); }, 3
   }
   initView();
   render();
+  TU.init({ getItem: currentItem, ensureDraft, saveDrafts: () => save.drafts(), rerender: () => render(), settings: () => S.settings, toast,
+    openPiece: (key) => { S.open[key] = true; render(); document.querySelector(`.piece[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'center' }); } });
   if (configured()) {
     Api.loadGsi().catch(() => {});
     sync();
