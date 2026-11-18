@@ -125,4 +125,22 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
 - Onderdelen met "rust 2'30": tik **✓ Set klaar** en de rust start automatisch (teller 2/5).
 - In ⚙ Interval-timer: geluid, volume, schermflits. Het scherm blijft aan (Wake Lock) zolang de timer loopt. Een lopende timer overleeft een herstart van de app; geluid moet je dan opnieuw aanzetten met één tik.
 - **Losse timer:** tik op ⏲ bovenaan (naast ↻). Je stelt type en duur in, zonder onderdeel en zonder iets in je log te schrijven. Handig om te testen of voor je klassen.
-- Op iOS kan geluid stoppen als het toestel vergrendelt of de app naar de achtergrond gaat; test dit eenmalig met een timer van 10 minuten.
+- **Vergrendelen:** 🔓 onderaan blokkeert Pauze, Stop en Klaar tegen per ongeluk aanraken (+1 ronde blijft werken). Ontgrendelen doe je door de knop 1 seconde ingedrukt te houden.
+- Op iOS kan geluid stoppen als het toestel vergrendelt of de app naar de achtergrond gaat; test dit eenmalig met een timer van 10 minuten. Zonder geluid op het lockscreen of met een andere app vooraan: houd de app open op het scherm (het scherm blijft vanzelf aan).
+
+
+## Ronde 2 (v5.0)
+- **Vorige keer** bij elk onderdeel: de app zoekt de laatste eerdere keer met dezelfde bewegingsnaam (sets, reps en minuten tellen niet mee), ook uit vorige cycli. Bij onderdelen met een record blijft de recordvergelijking staan.
+- **Gepland tegenover echt**: de geplande minuten staan in de Piece-naam, de echte tijd komt uit je sessietijden (of de som van de onderdeel-duur). Groen binnen 10%, oranje tot 25% erover, rood daarboven.
+- **Pijncheck de dag erna**: na een sessie met pijnmelding of kniebelastende bewegingen (squat, lunge, spring, loop, box, thruster, wall ball, burpee) vraagt de app de dag erna (tot 2 dagen later) "Hoe voelt het vandaag?". Het antwoord komt als "Dag erna: Knie 2/10" in Pain notes van het laatste onderdeel van die sessie. Je kunt overslaan.
+- **Week** (nieuw tabblad): sessies, onderdelen, tijd, gemiddelde RPE, indicatief volume en dagen met pijn of een slechte dag. Tik op een dag om er naartoe te gaan.
+- **Trends** (in Records): geschatte 1RM per lift (Brzycki, beste set per sessie) en sessies plus gemiddelde RPE per week.
+
+
+## Ronde 3 (v6.0)
+- **Readiness-check**: op de dag van vandaag, voor je iets logt, vraagt de app slaap, spierpijn en stress (3 tikken, overslaan kan). Het komt als tekst op elke rij van die dag in een kolom **Readiness**, die de app pas toevoegt als je hem voor het eerst gebruikt. De coach in de app leest het mee.
+- **Extra sessie of les** (knop bovenaan elke dag): titel, resultaat, RPE en duur. De app voegt een rij toe met Focus "Extra" en Piece "Les: titel". Kies je een gepland onderdeel dat het vervangt, dan krijgt dat "Vervangen door les".
+- **Gym-modus** (knop bovenaan elke dag): groot onderdeel met doel, plaatjes per kant, vorige keer en de timerknoppen. Vorige en Volgende bladeren door de sessie, Loggen brengt je naar het invulveld. Het scherm blijft aan.
+- **Coach-bevestiging** toont nu een schatting van de tokens en de kost. Losse vragen gaan standaard naar Haiku (uit te zetten in ⚙ Coach); reacties en weekoverzicht gebruiken je gekozen model.
+- **CSV-back-up**: ⚙ → "Logboek van dit tabblad exporteren (CSV)". Puntkomma-gescheiden, opent goed in Excel.
+- **Eerste keer**: de instellingen tonen nu 3 stappen bovenaan. Een Engelse interface is niet gebouwd.
