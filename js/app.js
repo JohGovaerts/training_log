@@ -1013,14 +1013,23 @@ async function coachCall(userText, { history = false, maxTokens = 900, withConte
   const system = Co.systemPrompt({ lang: coachLang(), profile: S.coach.profile || [], memory: S.coach.memory || [], context });
   const prior = history ? S.coach.chat.slice(-12).map((m) => ({ role: m.role, content: m.content })) : [];
   const messages = Co.withImages(Co.normalizeMessages([...prior, { role: 'user', content: userText }]), images);
-  const r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
+  let r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
   S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
+  if (!r.text && model !== S.settings.coachModel) {            // the quick model returned nothing: try the chosen model once
+    model = S.settings.coachModel;
+    r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
+    S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
+  }
+  save.coach();
+  if (!r.text) throw new Co.CoachError(Co.emptyReplyError(r.stop));
   S.coach.err = null; save.coach();
-  return r.text;
+  return Co.finalizeReply(r.text, r.stop);
 }
 
 // Haiku for plain questions; anything with an image goes to the model chosen in settings
-const quickModel = (nImg = 0) => (S.settings.coachQuick !== false && !nImg ? 'claude-haiku-5-5' : S.settings.coachModel);
+// plan changes (swap, move, adjust) also go to the chosen model: they need more care than a plain question
+const PLAN_CHANGE = /wissel|omwissel|verplaats|verschuif|verander|wijzig|aanpas|vervang|swap|move|change|replace/i;
+const quickModel = (nImg = 0, text = '') => (S.settings.coachQuick !== false && !nImg && !PLAN_CHANGE.test(text) ? 'claude-haiku-5-5' : S.settings.coachModel);
 function setBusy(v) {
   S.coach.busy = v;
   const focused = document.activeElement?.id === 'cdraft';
@@ -1108,7 +1117,7 @@ async function coachSend() {
   const keep = S.coach.draft; S.coach.draft = ''; S.coach.att = [];
   setBusy('chat');
   try {
-    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att, model: quickModel(att.length) });
+    const reply = await coachCall(text, { history: true, maxTokens: 1500, images: att, model: quickModel(att.length, text) });
     S.coach.chat.push(assistantMsg(reply)); save.coach();
   } catch (e) {
     S.coach.chat.pop(); S.coach.draft = keep; S.coach.att = att;   // nothing lost: question and attachments are back
@@ -1441,7 +1450,7 @@ $app.addEventListener('click', (e) => {
     case 'coach-send': {
       const t = (S.coach.draft || '').trim(), na = S.coach.att.length;
       if (!t && !na) break;
-      askCall({ model: quickModel(na), history: true, extraChars: (t || '').length + na * 1500, title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
+      askCall({ model: quickModel(na, t), history: true, extraChars: (t || '').length + na * 1500, title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
       break;
     }
     case 'coach-retry': S.coach.err = null; render(); break;

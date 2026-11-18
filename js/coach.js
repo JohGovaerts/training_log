@@ -190,6 +190,21 @@ export async function callClaude({ key, model = 'claude-sonnet-5-5', system, mes
   return { text, usage: j.usage || {}, stop: j.stop_reason };
 }
 
+// An empty answer (no text block) must never show up as an empty bubble.
+export function emptyReplyError(stop) {
+  const why = stop === 'max_tokens' ? 'het antwoord werd afgekapt voor er tekst was' : stop === 'refusal' ? 'het model weigerde te antwoorden' : `reden: ${stop || 'onbekend'}`;
+  return { kind: 'empty', title: 'De coach gaf geen antwoord', msg: `Er kwam geen tekst terug (${why}). Probeer het opnieuw, eventueel korter of in kleinere stappen. Er is niets aan je plan gewijzigd.` };
+}
+// Truncated answers: cut a half-written <voorstel> block and say so, so nothing broken reaches the plan.
+export function finalizeReply(text, stop) {
+  if (stop !== 'max_tokens') return text;
+  let t = text;
+  const cut = /<voorstel>(?![\s\S]*<\/voorstel>)[\s\S]*$/i.exec(t);
+  if (cut) t = t.slice(0, cut.index).trim() + '\n\n_(Het voorstel werd afgekapt en is niet toegepast. Vraag het opnieuw, eventueel per dag of per onderdeel.)_';
+  else t += '\n\n_(Antwoord afgekapt. Vraag het opnieuw, eventueel in kleinere stappen.)_';
+  return t;
+}
+
 // ---------- memory proposal ----------
 export function memoryPrompt({ memory = [], reply = '', lang = 'nl' }) {
   const cur = memory.map((m) => `- ${m.sectie}: ${m.inhoud}`).join('\n') || '(leeg)';
