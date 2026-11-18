@@ -257,7 +257,14 @@ body.gym-open { overflow: hidden; }
 #gym .gym-nav button { height: 60px; border-radius: 16px; background: var(--chip); font-weight: 700; font-size: 1.05rem; } #gym .gym-nav button.primary { background: var(--accent); color: var(--accent-ink); } #gym .gym-nav button[disabled] { opacity: .35; }
 .polarline { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
 .polarline .btn { padding: 8px 12px; font-size: .85rem; }
-.polarcard { border: 1px solid var(--line, #3335); border-radius: 12px; padding: 10px 12px; margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
-.polarcard small { color: var(--muted); }
-.polarcard.low { border-color: #d98a2b; background: #d98a2b14; }
-.polarcard.low small { color: #d98a2b; }
+.polarcard { --lv: #2e9e5b; border: 1px solid color-mix(in srgb, var(--lv) 45%, transparent); border-left: 8px solid var(--lv); background: color-mix(in srgb, var(--lv) 11%, var(--card, transparent)); border-radius: 14px; padding: 12px 14px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.polarcard.mid { --lv: #e08a12; }
+.polarcard.low { --lv: #d64545; }
+.pc-head { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
+.pc-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--lv); box-shadow: 0 0 0 4px color-mix(in srgb, var(--lv) 25%, transparent); flex: none; }
+.pc-src { margin-left: auto; font-size: .75rem; color: var(--muted); }
+.pc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px; }
+.pc-t { background: var(--card, #fff8); border: 1px solid #0001; border-radius: 10px; padding: 8px 6px; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.pc-t b { font-size: 1.25rem; line-height: 1.1; }
+.pc-t span { font-size: .7rem; color: var(--muted); }
+.pc-hint { margin: 0; font-size: .9rem; color: var(--lv); font-weight: 600; }
