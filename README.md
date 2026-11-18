@@ -92,3 +92,20 @@ Staat in "Prescribed" of "Intent/target" iets als `3x3 @ 90% van wk 1 triple`, d
 - Beschikbare plaatjes: 25, 20, 15, 10, 5, 2,5, 2, 1,5, 1,25, 1 en 0,5 kg (aanpasbaar in `js/loading.js`).
 
 Ook bij vaste gewichten (`@ 95 kg`, `(120-125 kg)`) en bij ramps (`60×5, 80×3, 100×2`) toont de app voor stangoefeningen de plaatjes per kant. `+20 kg` (extra gewicht), `van 160 kg` (basis) en oefeningen met dumbbell/kettlebell (Bulgarian split squat, goblet, lunge) worden overgeslagen.
+
+## Coach (optioneel)
+Zonder sleutel werkt de app volledig. Twee niveaus:
+
+- **Zonder sleutel**: *Deel met coach* (Coach-tab of onderaan een dag) kopieert je sessie/week als tekst (op mobiel opent het deelmenu); plak het in je coach-project. *🏋 Opbouw* bij een barbell-oefening met een streefgewicht toont een opbouwreeks met plaatjes per kant.
+- **Met eigen Anthropic API-sleutel** (⚙ → Coach): automatische coach-reactie na een afgeronde sessie, chat met geschiedenis, *💬 Vraag coach* per oefening, weekoverzicht + geheugenvoorstel, profiel, kostenteller en eigen maandlimiet.
+
+Sleutel: maak er een in console.anthropic.com → API keys, laad tegoed op en stel een maandlimiet in. De sleutel blijft in de browser van dit toestel en gaat alleen naar api.anthropic.com. Het geheugen staat in je eigen workbook (tabs `Coach profiel` en `Coach geheugen`, worden door de app aangemaakt); de coach doet voorstellen en past nooit zelf iets aan in je planning.
+Fouten (tegoed op, ongeldige sleutel, snelheidslimiet, overbelast, offline, eigen limiet) tonen een banner met uitleg; de coachknoppen worden dan grijs, loggen en records blijven werken.
+
+### Foto's, video en voorstellen
+- **📎 Foto of video** (Coach-tab): foto's worden verkleind (max 1024 px), een video wordt in de browser omgezet naar 8 frames (768 px) met tijdstip. Niets verlaat je toestel tot je op Stuur tikt. De coach ziet posities, geen snelheid; dat zegt hij erbij. Beelden zitten alleen bij de vraag zelf, niet in de chatgeschiedenis (houdt kosten laag).
+- **Voorstellen**: de coach kan een nieuw plan (kolom Prescribed) voorstellen voor een onderdeel dat nog niet gelogd is. Jij tikt Toepassen of Weigeren. Bij Toepassen leest de app eerst de sheet opnieuw: is het plan intussen veranderd of al gelogd, dan gebeurt er niets. *Ongedaan maken* zet de oude tekst terug zolang niemand het plan daarna wijzigde. De app schrijft nooit in de resultaatkolommen.
+- **Prompt caching** staat aan op de vaste coachcontext: opeenvolgende vragen binnen ±5 minuten kosten minder (gecachete invoer kost 10%). De kostenteller rekent dat mee.
+
+### Coach log
+Elke coach-reactie, elk weekoverzicht en elke toegepaste of teruggedraaide planwijziging komt als rij in het tabblad **Coach log** van je workbook (Datum, Soort, Over, Vraag, Antwoord, Voorstellen, Model). Je Claude-project kan die tab lezen, zodat wat in de app besproken is ook daar terug te vinden is. Offline of niet ingelogd: de rijen wachten op het toestel en worden later weggeschreven. Uit te zetten in ⚙ → Coach. De losse chatvragen worden niet gelogd.
