@@ -161,7 +161,7 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
 - De knop ⌚/↻ blijft bestaan voor handmatig bijwerken.
 
 ### v7.2: slaap uit Polar
-- Is Polar ingesteld en is er slaapdata van deze nacht, dan vraagt de readiness-check de slaap niet meer: de app zet hem zelf (slaapscore ≥70 = Goed, 50–69 = Ok, <50 = Slecht) en toont "Goed (Polar 81)". Je beantwoordt alleen nog spierpijn en stress.
+- Is Polar ingesteld en is er slaapdata van deze nacht, dan vult de readiness-check de slaap zelf in (slaapscore ≥70 = Goed, 50–69 = Ok, <50 = Slecht) met het label "voorgesteld door Polar (81)". De knoppen blijven staan: tik een andere waarde aan en die wint (v7.4).
 - Ontbreekt de slaapdata (horloge niet gedragen, nog niet gesynct), dan blijft de slaapvraag gewoon staan.
 - Spierpijn en stress blijven je eigen antwoord: Polar meet die niet direct.
 
@@ -172,3 +172,8 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
   - Oranje: Recharge 3, ANS onder je norm, slaapscore 45–59.
   - Je eigen readiness-antwoorden tellen mee: "spierpijn veel", "stress hoog" (en "slaap slecht" als Polar geen slaap heeft) zijn elk een aandachtspunt.
 - Bij oranje of rood, zolang je nog niets gelogd hebt, staat er een zachte hint (lager volume of RPE-doel). Het plan verandert niet.
+
+### v7.5: woorden bij de tegels en uitleg
+- Onder elk cijfer in de herstelkaart staat één woord: Recharge laag/normaal/hoog, ANS charge lager/normaal/beter dan jouw gewoonte, HRV lager/normaal/beter dan het gemiddelde van de nachten ervoor, slaap laag/normaal/hoog.
+- HRV krijgt pas een woord als de Worker (v2) een gemiddelde van minstens 3 eerdere nachten meegeeft. Met de oude Worker blijft dat woord weg.
+- De **?** op de kaart opent een korte uitleg per tegel en van de kleuren.
