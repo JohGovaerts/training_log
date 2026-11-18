@@ -268,3 +268,8 @@ body.gym-open { overflow: hidden; }
 .pc-t b { font-size: 1.25rem; line-height: 1.1; }
 .pc-t span { font-size: .7rem; color: var(--muted); }
 .pc-hint { margin: 0; font-size: .9rem; color: var(--lv); font-weight: 600; }
+.pc-t em { font-style: normal; font-size: .72rem; font-weight: 700; color: var(--text, inherit); }
+.pc-q { margin-left: 8px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid #0003; background: transparent; font-weight: 700; color: var(--muted); cursor: pointer; flex: none; }
+.pc-help { margin: 0; font-size: .82rem; display: grid; gap: 2px; }
+.pc-help dt { font-weight: 700; margin-top: 6px; }
+.pc-help dd { margin: 0; color: var(--muted); }
