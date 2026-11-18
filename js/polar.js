@@ -88,3 +88,23 @@ export function sleepAnswer(dayData) {
   if (!s || s.score == null) return null;
   return s.score >= 70 ? 'Goed' : s.score >= 50 ? 'Ok' : 'Slecht';
 }
+
+/** Eén woord per tegel: laag/normaal/hoog (vaste schaal) of lager/normaal/beter (t.o.v. jouw eigen gemiddelde). */
+export function tileWords(dayData) {
+  const r = (dayData && dayData.recharge) || {}, s = (dayData && dayData.sleep) || {};
+  const out = { recharge: null, ans: null, hrv: null, sleep: null };
+  if (r.status != null) out.recharge = r.status <= 3 ? 'laag' : r.status === 4 ? 'normaal' : 'hoog';
+  if (r.ansStatus != null) out.ans = { 1: 'veel lager', 2: 'lager', 3: 'normaal', 4: 'beter', 5: 'veel beter' }[r.ansStatus] || null;
+  const b = r.hrvBaseline;
+  if (r.hrv != null && b && b.avg > 0 && b.n >= 3) { const q = r.hrv / b.avg; out.hrv = q <= 0.9 ? 'lager' : q >= 1.1 ? 'beter' : 'normaal'; }
+  if (s.score != null) out.sleep = s.score < 60 ? 'laag' : s.score < 80 ? 'normaal' : 'hoog';
+  return out;
+}
+
+export const HELP = [
+  ['Recharge', 'Hoe goed je lichaam vannacht heeft hersteld, van 1 (slecht) tot 6 (heel goed). Woord: laag, normaal of hoog.'],
+  ['ANS charge', 'Hoe je zenuwstelsel hersteld is, vergeleken met jouw eigen gemiddelde van de laatste weken. 0 is je normaal, plus is beter, min is lager. Woord: lager, normaal of beter dan jouw gewoonte.'],
+  ['HRV', 'Hoeveel de tijd tussen je hartslagen schommelt. Hoger is meestal beter hersteld. Het getal zegt alleen iets vergeleken met je eigen gemiddelde van de nachten ervoor. Woord: lager, normaal of beter dan dat gemiddelde.'],
+  ['Slaap', 'De slaapscore van Polar (0–100) en hoeveel uur je sliep. Woord: laag onder 60, hoog vanaf 80.'],
+  ['Kleur', 'Groen: geen aandachtspunten. Oranje: één aandachtspunt. Rood: een duidelijk slecht cijfer of twee aandachtspunten. Je eigen antwoorden (spierpijn, stress) tellen mee.'],
+];

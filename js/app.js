@@ -29,7 +29,7 @@ const S = {
   dismissed: LS.get('dismissed', {}),
   missing: [], cycles: [],
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
-  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null, polarDay: {}, polarAutoAt: {}, polarBusy: '',
+  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null, polarDay: {}, polarAutoAt: {}, polarBusy: '', polarHelp: false,
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
   coach: { chat: [], cost: null, reactions: {}, err: null, busy: '', profile: null, memory: null, memTs: 0, memProposal: null, draft: '', ramp: {}, ...LS.get('coach', {}), err: null, busy: '', memProposal: null, ramp: {}, att: [] },
@@ -680,7 +680,7 @@ function polarSleep() {
   const ans = e && Pl.sleepAnswer(e.data);
   return ans ? { ans, score: e.data.sleep.score } : null;
 }
-const effReady = () => { const p = polarSleep(); return p ? { ...S.ready, sl: p.ans } : S.ready; };
+const effReady = () => { const p = polarSleep(); return p && !S.ready.sl ? { ...S.ready, sl: p.ans } : S.ready; };  // Polar vult voor in; een eigen keuze wint
 function readyBarHTML() {
   if (S.settings.readiness === false || !S.view || !S.rows.length) return '';
   const { week, dayIdx } = S.view, today = Sh.todayPosition(curStart());
@@ -689,8 +689,8 @@ function readyBarHTML() {
   if (!rs.length || rs.some((r) => r.readiness && r.readiness.trim()) || rs.some((r) => Sh.status(r) !== 'open')) return '';
   if (S.dismissed[`ready|${S.settings.tab}|${week}|${dayIdx}`]) return '';
   const ps = polarSleep(), R = effReady();
-  const row = (k) => k === 'sl' && ps ? `<div class="lbl">Slaap<div class="hint">${ps.ans} (Polar ${ps.score})</div></div>` : `<div class="lbl">${In.READY_LABELS[k]}<div class="chips">${In.READY_OPTS[k].map((v) => `<button type="button" data-act="ready-set" data-k="${k}" data-v="${v}" class="${R[k] === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`;
-  return `<div class="painbar readybar"><b>Hoe sta je erbij vandaag?</b><small>${ps ? '2 tikken, slaap komt van Polar' : '3 tikken'}, de coach neemt het mee</small>${row('sl')}${row('sp')}${row('st')}
+  const row = (k) => `<div class="lbl">${In.READY_LABELS[k]}${k === 'sl' && ps ? `<small class="hint"> · ${S.ready.sl && S.ready.sl !== ps.ans ? `Polar stelde ${ps.ans} voor (${ps.score})` : `voorgesteld door Polar (${ps.score})`}</small>` : ''}<div class="chips">${In.READY_OPTS[k].map((v) => `<button type="button" data-act="ready-set" data-k="${k}" data-v="${v}" class="${R[k] === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`;
+  return `<div class="painbar readybar"><b>Hoe sta je erbij vandaag?</b><small>${ps ? 'slaap is voorgesteld door Polar, pas aan als het niet klopt' : '3 tikken, de coach neemt het mee'}</small>${row('sl')}${row('sp')}${row('st')}
     <div class="row2"><button class="btn primary" data-act="ready-save" ${In.readyComplete(R) ? '' : 'disabled'}>Opslaan</button><button class="btn link" data-act="ready-skip">Overslaan</button></div></div>`;
 }
 function readyAction(a, b) {
@@ -766,18 +766,19 @@ function polarCardHTML(week, dayIdx, rs) {
   if (!lv) return '';
   const r = e.data.recharge, sl = e.data.sleep;
   const dec = (n) => String(Math.round(n * 10) / 10).replace('.', ',');
-  const tile = (v, l) => `<div class="pc-t"><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+  const W = Pl.tileWords(e.data);
+  const tile = (v, l, w) => `<div class="pc-t"><b>${esc(v)}</b><span>${esc(l)}</span>${w ? `<em>${esc(w)}</em>` : ''}</div>`;
   const tiles = [
-    r && r.status != null ? tile(`${r.status}/6`, 'Recharge') : '',
-    r && r.ansCharge != null ? tile(`${r.ansCharge > 0 ? '+' : ''}${dec(r.ansCharge)}`, 'ANS charge') : '',
-    r && r.hrv != null ? tile(Math.round(r.hrv), 'HRV') : '',
-    sl && sl.score != null ? tile(sl.score, `Slaap${sl.asleepMin ? ` · ${Math.floor(sl.asleepMin / 60)}u${String(sl.asleepMin % 60).padStart(2, '0')}` : ''}`) : '',
+    r && r.status != null ? tile(`${r.status}/6`, 'Recharge', W.recharge) : '',
+    r && r.ansCharge != null ? tile(`${r.ansCharge > 0 ? '+' : ''}${dec(r.ansCharge)}`, 'ANS charge', W.ans) : '',
+    r && r.hrv != null ? tile(Math.round(r.hrv), 'HRV', W.hrv) : '',
+    sl && sl.score != null ? tile(sl.score, `Slaap${sl.asleepMin ? ` · ${Math.floor(sl.asleepMin / 60)}u${String(sl.asleepMin % 60).padStart(2, '0')}` : ''}`, W.sleep) : '',
   ].join('');
   const untouched = rs.every((r2) => Sh.status(r2) === 'open');
   const why = lv.reasons.length ? ` (${esc(lv.reasons.join(', '))})` : '';
   const hint = !untouched ? '' : lv.level === 'low' ? `<p class="pc-hint">Herstel onder je norm${why}. Overweeg lager volume of een lager RPE-doel vandaag.</p>`
     : lv.level === 'mid' ? `<p class="pc-hint">Herstel wat onder je norm${why}. Bouw rustig op en kijk hoe de eerste sets voelen.</p>` : '';
-  return `<div class="polarcard ${lv.level}"><div class="pc-head"><span class="pc-dot"></span><b>Herstel vandaag: ${lv.label}</b><span class="pc-src">⌚ Polar</span></div><div class="pc-grid">${tiles}</div>${hint}</div>`;
+  return `<div class="polarcard ${lv.level}"><div class="pc-head"><span class="pc-dot"></span><b>Herstel vandaag: ${lv.label}</b><span class="pc-src">⌚ Polar</span><button class="pc-q" data-act="polar-help" aria-label="Uitleg">?</button></div><div class="pc-grid">${tiles}</div>${S.polarHelp ? `<dl class="pc-help">${Pl.HELP.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>` : ''}${hint}</div>`;
 }
 async function polarTest() {
   readSettingsForm();
@@ -1410,6 +1411,7 @@ $app.addEventListener('click', (e) => {
     case 'skip': { const d = ensureDraft(currentItem(key)); d.actual = 'Skip'; commitPiece(key); break; }
     case 'ptimer': S.drafts[key]?.tRun ? pausePartTimer(key) : startPartTimer(key); break;
     case 'treset': resetPartTimer(key); break;
+    case 'polar-help': S.polarHelp = !S.polarHelp; render(); break;
     case 'polar-fetch': polarFetch(); break;
     case 'polar-test': polarTest(); break;
     case 'sess-start': startSession(); break;
