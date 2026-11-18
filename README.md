@@ -144,3 +144,18 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
 - **Coach-bevestiging** toont nu een schatting van de tokens en de kost. Losse vragen zonder beeld gaan standaard naar Haiku (uit te zetten in ⚙ Coach); vragen met foto of video, reacties en weekoverzicht gebruiken je gekozen model.
 - **CSV-back-up**: ⚙ → "Logboek van dit tabblad exporteren (CSV)". Puntkomma-gescheiden, opent goed in Excel.
 - **Eerste keer**: de instellingen tonen nu 3 stappen bovenaan. Een Engelse interface is niet gebouwd.
+
+
+## Polar (v7.0 en v7.1, optioneel)
+- Zonder Worker-adres en code in ⚙ → Polar verandert er niets. Eerst de Worker uitrollen (zie `polar-worker-v1.zip`).
+- Op een dag (vandaag of eerder) komt een knop **⌚ Polar-gegevens ophalen**. De app vraagt je Worker om het herstel van die ochtend (Nightly Recharge, ANS charge, HRV, slaapscore) en kiest de training die overlapt met je sessietijden (±10 min). Zonder sessietijden pakt hij de langste training van die dag.
+- Het resultaat komt als één tekst op elke rij van die dag, in een kolom **Polar** (pas toegevoegd bij het eerste gebruik), bv. `Recharge 5/6 · ANS -0,4 · HRV 71 · Slaap 81 (7u04) · Training gem HR 142, max 171, load 38,4`. De coach in de app leest het mee.
+- Staat de training er nog niet: sync je horloge met Polar Flow en tik **↻**. Het herstel wordt dan meteen bewaard, de training volgt bij de volgende keer.
+- RPE uit Polar komt alleen mee als die al op het horloge is ingevuld vóór de eerste sync; je eigen RPE in de app blijft de bron.
+- De toegangscode blijft op dit toestel en gaat enkel als header naar je eigen Worker.
+
+### v7.1: automatisch en herstelkaart
+- **Automatisch ophalen**: na elke geslaagde sync (max. 1× per 3 min) haalt de app het herstel van vandaag op en bewaart het in de kolom Polar, zonder tikken. Is er al een sessie afgerond, dan koppelt hij ook de training zodra Polar die heeft.
+- **Na het einde van een training** probeert de app het nog 3× (na 1,5, 4 en 8 minuten), omdat het horloge even nodig heeft om naar Polar Flow te synchroniseren. Is de app dan dicht, dan gebeurt het bij de volgende keer openen.
+- **Herstelkaart** bovenaan vandaag. Bij normaal herstel dat al bewaard is verschijnt er niets. Is Recharge ≤3, de ANS ver onder je norm of de slaapscore onder 50, dan toont de kaart oranje met een zachte hint ("overweeg lager volume of een lager RPE-doel"), zolang je nog niets gelogd hebt. Het plan zelf verandert niet; jij beslist.
+- De knop ⌚/↻ blijft bestaan voor handmatig bijwerken.
