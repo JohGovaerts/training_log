@@ -159,3 +159,16 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
 - **Na het einde van een training** probeert de app het nog 3× (na 1,5, 4 en 8 minuten), omdat het horloge even nodig heeft om naar Polar Flow te synchroniseren. Is de app dan dicht, dan gebeurt het bij de volgende keer openen.
 - **Herstelkaart** bovenaan vandaag. Bij normaal herstel dat al bewaard is verschijnt er niets. Is Recharge ≤3, de ANS ver onder je norm of de slaapscore onder 50, dan toont de kaart oranje met een zachte hint ("overweeg lager volume of een lager RPE-doel"), zolang je nog niets gelogd hebt. Het plan zelf verandert niet; jij beslist.
 - De knop ⌚/↻ blijft bestaan voor handmatig bijwerken.
+
+### v7.2: slaap uit Polar
+- Is Polar ingesteld en is er slaapdata van deze nacht, dan vraagt de readiness-check de slaap niet meer: de app zet hem zelf (slaapscore ≥70 = Goed, 50–69 = Ok, <50 = Slecht) en toont "Goed (Polar 81)". Je beantwoordt alleen nog spierpijn en stress.
+- Ontbreekt de slaapdata (horloge niet gedragen, nog niet gesynct), dan blijft de slaapvraag gewoon staan.
+- Spierpijn en stress blijven je eigen antwoord: Polar meet die niet direct.
+
+### v7.3: duidelijkere herstelkaart met kleur
+- De kaart bovenaan vandaag is nu altijd zichtbaar (als Polar ingesteld is en er data is): grote kleurbalk, een stip, "Herstel vandaag: goed / matig / laag" en tegels voor Recharge, ANS charge, HRV en slaap.
+- **Groen** = goed. **Oranje** = matig (1 aandachtspunt). **Rood** = laag (een duidelijk slecht cijfer of 2 aandachtspunten).
+  - Rood: Recharge ≤2, ANS ver onder je norm, of slaapscore <45.
+  - Oranje: Recharge 3, ANS onder je norm, slaapscore 45–59.
+  - Je eigen readiness-antwoorden tellen mee: "spierpijn veel", "stress hoog" (en "slaap slecht" als Polar geen slaap heeft) zijn elk een aandachtspunt.
+- Bij oranje of rood, zolang je nog niets gelogd hebt, staat er een zachte hint (lager volume of RPE-doel). Het plan verandert niet.
