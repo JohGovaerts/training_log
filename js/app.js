@@ -815,9 +815,10 @@ async function ensureTab(t) { if (!hasTab(t)) { await Api.addTab(S.settings.shee
 async function coachLoad(force = false) {
   if (!coachOn() && !force) return;
   if (!configured() || !navigator.onLine || !Api.tokenValid()) return;
-  if (!force && Date.now() - S.coach.memTs < 3600e3 && S.coach.profile && S.coach.memory) return;
+  const filled = (S.coach.profile || []).length && (S.coach.memory || []).length;
+  if (!force && Date.now() - S.coach.memTs < 3600e3 && filled) return;
   try {
-    if (!S.tabs.length) S.tabs = (await Api.getMeta(S.settings.sheetId)).tabs;
+    if (!S.tabs.length || !hasTab(Co.COACH_TABS.profile) || !hasTab(Co.COACH_TABS.memory)) S.tabs = (await Api.getMeta(S.settings.sheetId)).tabs;
     const p = hasTab(Co.COACH_TABS.profile) ? await Api.getValues(S.settings.sheetId, Co.COACH_TABS.profile) : [];
     const m = hasTab(Co.COACH_TABS.memory) ? await Api.getValues(S.settings.sheetId, Co.COACH_TABS.memory) : [];
     S.coach.profile = Co.parseTable(p, ['veld', 'inhoud']);
@@ -982,7 +983,7 @@ function coachHTML() {
     <div class="askbox"><textarea id="cdraft" rows="2" placeholder="Vraag aan je coach…">${esc(c.draft)}</textarea><button class="btn primary" data-act="coach-send" ${dis}>Stuur</button></div>
     ${share}
     <details><summary>Wat de coach weet</summary>${know}</details>
-    <details><summary>Mijn profiel</summary><div class="form" style="border:0;padding:0">${profForm}<button class="btn primary" data-act="prof-save">Profiel bewaren</button></div></details>
+    <details><summary>Mijn profiel</summary><div class="form" style="border:0;padding:0">${profForm}<button class="btn primary" data-act="prof-save">Profiel bewaren</button><button class="btn" data-act="coach-reload">↻ Opnieuw laden uit de sheet</button></div></details>
     <p class="hintline">Deze maand: ${Co.fmtUsd(cost.usd)} · ${cost.n} aanvragen${+S.settings.coachLimit > 0 ? ` · limiet ${Co.fmtUsd(+S.settings.coachLimit)}` : ''} · ${esc(S.settings.coachModel)} · de coach doet voorstellen, hij past niets zelf aan.</p></div>`;
 }
 
@@ -1097,6 +1098,7 @@ $app.addEventListener('click', (e) => {
     case 'mem-drop': S.coach.memProposal = null; render(); break;
     case 'mem-wrong': { const m = S.coach.memory[+b.dataset.i]; if (m && window.confirm(`"${m.sectie}" uit het geheugen verwijderen?`)) saveMemory(S.coach.memory.filter((_, i) => i !== +b.dataset.i).map((x) => ({ ...x, status: 'gelijk' }))); break; }
     case 'prof-save': saveProfile(); break;
+    case 'coach-reload': toast('Laden…'); coachLoad(true).then(() => toast('Profiel en geheugen herladen ✓')); break;
     case 'att-del': S.coach.att.splice(+b.dataset.i, 1); render(); break;
     case 'prop-apply': proposalAct(+b.dataset.m, +b.dataset.p, 'apply'); break;
     case 'prop-reject': proposalAct(+b.dataset.m, +b.dataset.p, 'reject'); break;
