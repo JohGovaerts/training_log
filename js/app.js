@@ -867,7 +867,7 @@ function settingsHTML(first) {
       <label>Taal van de coach<select id="f-clang"><option value="nl" ${s.coachLang !== 'en' ? 'selected' : ''}>Nederlands</option><option value="en" ${s.coachLang === 'en' ? 'selected' : ''}>English</option></select></label>
       <label>Eigen maandlimiet (USD, 0 = geen)<input id="f-climit" type="number" min="0" step="1" value="${esc(s.coachLimit)}" inputmode="decimal"><span class="hint">De app waarschuwt bij 80% en pauzeert de coach bij 100%. Stel in de Anthropic Console ook een harde limiet in.</span></label>
       <label>Link naar je coach-project (optioneel)<input id="f-curl" value="${esc(s.coachUrl)}" placeholder="https://claude.ai/project/…" autocomplete="off" autocapitalize="off"></label>
-      <label class="toggle"><input type="checkbox" id="f-cquick" ${s.coachQuick !== false ? 'checked' : ''}> Losse vragen met Haiku (goedkoper); reacties en weekoverzicht gebruiken het model hierboven</label>
+      <label class="toggle"><input type="checkbox" id="f-cquick" ${s.coachQuick !== false ? 'checked' : ''}> Losse vragen met Haiku (goedkoper); vragen met foto of video, reacties en weekoverzicht gebruiken het model hierboven</label>
       <label class="toggle"><input type="checkbox" id="f-cauto" ${s.coachAuto ? 'checked' : ''}> Automatisch coach-reactie na een afgeronde sessie</label>
       <label class="toggle"><input type="checkbox" id="f-clog" ${s.coachLog ? 'checked' : ''}> Reacties en wijzigingen bewaren in tab "Coach log" (je project kan ze lezen)</label></div></details>
     <button class="btn" data-act="csv">Logboek van dit tabblad exporteren (CSV)</button>
@@ -920,7 +920,8 @@ async function coachCall(userText, { history = false, maxTokens = 900, withConte
   return r.text;
 }
 
-const quickModel = () => (S.settings.coachQuick !== false ? 'claude-haiku-5-5' : S.settings.coachModel);
+// Haiku for plain questions; anything with an image goes to the model chosen in settings
+const quickModel = (nImg = 0) => (S.settings.coachQuick !== false && !nImg ? 'claude-haiku-5-5' : S.settings.coachModel);
 function setBusy(v) {
   S.coach.busy = v;
   const focused = document.activeElement?.id === 'cdraft';
@@ -1008,7 +1009,7 @@ async function coachSend() {
   const keep = S.coach.draft; S.coach.draft = ''; S.coach.att = [];
   setBusy('chat');
   try {
-    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att, model: quickModel() });
+    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att, model: quickModel(att.length) });
     S.coach.chat.push(assistantMsg(reply)); save.coach();
   } catch (e) {
     S.coach.chat.pop(); S.coach.draft = keep; S.coach.att = att;   // nothing lost: question and attachments are back
@@ -1336,7 +1337,7 @@ $app.addEventListener('click', (e) => {
     case 'coach-send': {
       const t = (S.coach.draft || '').trim(), na = S.coach.att.length;
       if (!t && !na) break;
-      askCall({ model: quickModel(), history: true, extraChars: (t || '').length + na * 1500, title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
+      askCall({ model: quickModel(na), history: true, extraChars: (t || '').length + na * 1500, title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
       break;
     }
     case 'coach-retry': S.coach.err = null; render(); break;
