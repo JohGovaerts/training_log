@@ -255,3 +255,9 @@ body.gym-open { overflow: hidden; }
 #gym .gym-btns { display: flex; gap: 10px; flex-wrap: wrap; } #gym .gym-btns .mini { font-size: 1.1rem; padding: 14px 18px; border-radius: 14px; background: var(--chip); font-weight: 700; }
 #gym .gym-nav { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; margin-top: auto; }
 #gym .gym-nav button { height: 60px; border-radius: 16px; background: var(--chip); font-weight: 700; font-size: 1.05rem; } #gym .gym-nav button.primary { background: var(--accent); color: var(--accent-ink); } #gym .gym-nav button[disabled] { opacity: .35; }
+.polarline { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.polarline .btn { padding: 8px 12px; font-size: .85rem; }
+.polarcard { border: 1px solid var(--line, #3335); border-radius: 12px; padding: 10px 12px; margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+.polarcard small { color: var(--muted); }
+.polarcard.low { border-color: #d98a2b; background: #d98a2b14; }
+.polarcard.low small { color: #d98a2b; }
