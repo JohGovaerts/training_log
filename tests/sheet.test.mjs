@@ -101,3 +101,14 @@ test('contract v1: Cycle column parsed, missing columns reported', () => {
   const old = S.buildColumnMap(header);
   assert.deepEqual(S.missingExpected(old.map), ['Cycle']);
 });
+
+import * as ShX from '../js/sheet.js';
+test('extraRow lays a new row out by the column map; readiness is a session field', () => {
+  const { map, newHeaders } = ShX.buildColumnMap(['Cycle', 'Week', 'Dag', 'Focus', 'Piece', 'Actual', 'RPE']);
+  assert.ok(!('readiness' in map)); ShX.ensureCol(map, newHeaders, 'readiness'); assert.equal(newHeaders.at(-1).title, 'Readiness');
+  const row = ShX.extraRow(map, { cycle: '3', week: 2, dag: 'Wo', focus: 'Extra', piece: 'Les: CrossFit', actual: 'ok', rpe: '7', loggedAt: 'x', readiness: 'y' });
+  assert.equal(row[map.piece], 'Les: CrossFit'); assert.equal(row[map.week], '2'); assert.equal(row[map.readiness], 'y'); assert.equal(row.length, Math.max(...Object.values(map)) + 1);
+  const rows = [{ week: 2, dayIdx: 2, rowNum: 5 }, { week: 2, dayIdx: 2, rowNum: 6 }];
+  const cells = ShX.planWrites(rows, map, { type: 'session', week: 2, dayIdx: 2, fields: { readiness: 'z' } });
+  assert.equal(cells.length, 2); assert.equal(ShX.planWrites(rows, map, { type: 'extra', fields: {} }).length, 0);
+});
