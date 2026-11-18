@@ -287,3 +287,6 @@ body.gym-open { overflow: hidden; }
 .tpday small { font-size: .62rem; color: var(--muted); line-height: 1.15; }
 .tpday.on { border-color: var(--accent, #e8541e); background: color-mix(in srgb, var(--accent, #e8541e) 14%, transparent); }
 .tpday:disabled { opacity: .35; cursor: default; }
+
+.coachcard.you { border-left-color: var(--muted); margin: 8px 0 0; }
+.dayask textarea { min-height: 0; }
