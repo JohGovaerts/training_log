@@ -73,7 +73,8 @@ export function pieceLine(r, { plan = true } = {}) {
 function dayBlock(rows, week, dayIdx, opts) {
   const rs = rows.filter((r) => r.week === week && r.dayIdx === dayIdx);
   if (!rs.length) return '';
-  return `${DAYS[dayIdx]} (week ${week}) — ${clip(rs[0].focus, 60)}\n${rs.map((r) => pieceLine(r, opts)).join('\n')}`;
+  const ready = (rs.find((r) => r.readiness) || {}).readiness;
+  return `${DAYS[dayIdx]} (week ${week}) — ${clip(rs[0].focus, 60)}${ready ? `\nReadiness bij start: ${clip(ready, 80)}` : ''}\n${rs.map((r) => pieceLine(r, opts)).join('\n')}`;
 }
 
 export function sessionSummary(rows, week, dayIdx) { return dayBlock(rows, week, dayIdx, { plan: true }); }

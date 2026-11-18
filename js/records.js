@@ -196,7 +196,7 @@ export function collectLogs(grids, cycleStarts = {}) {
       if (Sh.status(r) !== 'done' || !r.actual.trim()) continue;
       let date = parseAnyDate(r.loggedAt);
       if (!date) date = Sh.dateFor(cycleStarts[tab] || '', r.week, Math.max(0, r.dayIdx));
-      logs.push({ tab, key: r.key, piece: r.piece, benchmark: (r.benchmark || '').trim(), actual: r.actual.trim(), rpe: r.rpe.trim(), badDay: Sh.normBad(r.badDay), pain: r.pain, notes: r.notes, date: isoDate(date) });
+      logs.push({ tab, key: r.key, week: r.week, dayIdx: r.dayIdx, piece: r.piece, benchmark: (r.benchmark || '').trim(), actual: r.actual.trim(), rpe: r.rpe.trim(), badDay: Sh.normBad(r.badDay), pain: r.pain, notes: r.notes, date: isoDate(date) });
     }
   }
   return logs;

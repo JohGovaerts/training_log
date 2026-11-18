@@ -22,13 +22,20 @@ const ALIASES = {
   actual: ['actual'], splits: ['rep splits'], rpe: ['rpe'], badDay: ['bad day'],
   pain: ['pain notes'], notes: ['notes'],
   loggedAt: ['gelogd op'], start: ['start'], end: ['einde'], dur: ['duur (min)', 'duur'],
-  sStart: ['sessie start'], sEnd: ['sessie einde'],
+  sStart: ['sessie start'], sEnd: ['sessie einde'], readiness: ['readiness'],
 };
 // Columns the app adds (to the right of the existing ones) when missing.
 export const APP_COLS = {
   loggedAt: 'Gelogd op', start: 'Start', end: 'Einde', dur: 'Duur (min)',
   sStart: 'Sessie start', sEnd: 'Sessie einde',
 };
+// Added only when first needed (so a sheet that never uses it is left untouched).
+export const LAZY_COLS = { readiness: 'Readiness' };
+export function ensureCol(map, newHeaders, key) {
+  if (key in map) return;
+  const next = Math.max(-1, ...Object.values(map)) + 1;
+  map[key] = next; newHeaders.push({ col: next, title: LAZY_COLS[key] });
+}
 const REQUIRED = ['week', 'dag', 'piece'];
 
 export function colLetter(i) {
@@ -76,7 +83,7 @@ export function buildColumnMap(headerRow) {
 }
 
 const FIELDS = ['cycle', 'week', 'dag', 'focus', 'piece', 'benchmark', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
-  'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd'];
+  'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd', 'readiness'];
 
 export function parseRows(values, headerIdx, map, prefix = '') {
   const rows = [];
@@ -163,10 +170,12 @@ export function planWrites(rows, map, op) {
     const r = rows.find((x) => x.key === op.key);
     if (!r) return null;
     for (const [f, value] of Object.entries(op.fields)) if (f in map) cells.push({ row: r.rowNum, col: map[f], field: f, value });
+  } else if (op.type === 'extra') {
+    return [];                      // a new row: appended separately (see extraRow)
   } else if (op.type === 'session') {
     const targets = rows.filter((x) => x.week === op.week && x.dayIdx === op.dayIdx);
     if (!targets.length) return null;
-    for (const r of targets) for (const f of ['sStart', 'sEnd']) {
+    for (const r of targets) for (const f of ['sStart', 'sEnd', 'readiness']) {
       if (op.fields[f] !== undefined && f in map) cells.push({ row: r.rowNum, col: map[f], field: f, value: op.fields[f] });
     }
   }
@@ -241,4 +250,12 @@ export function todayPosition(cycleStart, now = new Date()) {
 export const cycleNum = (tab) => { const m = /^\s*cycle\s*(\d+)/i.exec(String(tab || '')); return m ? +m[1] : null; };
 export function cycleTabs(tabs) {
   return (tabs || []).filter((t) => cycleNum(t) != null).sort((a, b) => cycleNum(b) - cycleNum(a));
+}
+
+// A new row for the sheet (extra session or class), laid out by the column map.
+export function extraRow(map, fields) {
+  const n = Math.max(-1, ...Object.values(map)) + 1;
+  const row = Array(n).fill('');
+  for (const [f, v] of Object.entries(fields)) if (f in map) row[map[f]] = String(v ?? '');
+  return row;
 }

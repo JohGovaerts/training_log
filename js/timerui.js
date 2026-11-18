@@ -40,6 +40,9 @@ export function init(c) {
   ctx = c;
   $tm = document.createElement('div'); $tm.id = 'tm'; $tm.hidden = true; document.body.appendChild($tm);
   $rest = document.createElement('div'); $rest.id = 'tmrest'; $rest.hidden = true; document.body.appendChild($rest);
+  $tm.addEventListener('pointerdown', holdStart);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $tm.addEventListener(ev, holdEnd));
+  $tm.addEventListener('contextmenu', (e) => { if (e.target.closest('.tm-lock')) e.preventDefault(); });
   $tm.addEventListener('click', onClick); $rest.addEventListener('click', onClick);
   $tm.addEventListener('change', (e) => { if (e.target.id === 'tm-type') { M.cfgDraft = { ...(M.cfgDraft || {}), type: e.target.value }; renderTm(); } });
   document.addEventListener('visibilitychange', () => {
@@ -72,7 +75,9 @@ export function click(e) { onClick(e); }
 function onClick(e) {
   const b = e.target.closest('[data-tm]'); if (!b) return;
   const a = b.dataset.tm, key = b.dataset.key;
+  if (M.locked && ['pause', 'stop', 'done', 'minus', 'resume', 'edit', 'close'].includes(a)) { hintLocked(); return; }
   switch (a) {
+    case 'lock': M.locked = true; saveM(); renderTm(); break;
     case 'open': openTimer(key); break;
     case 'free': openFree(); break;
     case 'setdone': setDone(key); break;
@@ -95,6 +100,19 @@ function onClick(e) {
     case 'rest-close': stopRest(); break;
     default: break;
   }
+}
+
+function hintLocked() {
+  const el = $tm.querySelector('.tm-lock'); if (!el) return;
+  el.classList.add('tm-nudge'); setTimeout(() => el.classList.remove('tm-nudge'), 400);
+}
+// hold the unlock button for 1 s
+let holdT = null;
+const holdEnd = () => { clearTimeout(holdT); holdT = null; $tm?.querySelector('.tm-lock')?.classList.remove('holding'); };
+function holdStart(e) {
+  const b = e.target.closest('[data-tm="unlock"]'); if (!b) return;
+  b.classList.add('holding'); clearTimeout(holdT);
+  holdT = setTimeout(() => { holdT = null; M.locked = false; saveM(); renderTm(); }, 1000);
 }
 
 function openTimer(key) {
@@ -142,7 +160,7 @@ async function start() {
   applySound();
   beeper.unlock();
   wake.hold();
-  M.run = { startMs: now(), accMs: 0, running: true }; M.stage = 'run'; M.rounds = 0; M.stopped = false; lastSeg = -2;
+  M.run = { startMs: now(), accMs: 0, running: true }; M.stage = 'run'; M.rounds = 0; M.locked = false; M.stopped = false; lastSeg = -2;
   schedM.reset(events, 0); saveM(); applyAll();
 }
 function elapsed() { return T.runElapsed(M.run, now()); }
@@ -312,7 +330,8 @@ function renderTm() {
     <div class="tm-barwrap"><div class="tm-fill" id="tm-fill" style="width:${Math.round(progressFor(s) * 1000) / 10}%"></div></div>
     <div class="tm-move"><b id="tm-move">${esc(move)}</b><span id="tm-next">${esc(next)}</span></div>
     ${type === 'amrap' ? '<div class="tm-plusrow"><button class="tm-minus" data-tm="minus" aria-label="Een ronde minder">−</button><button class="tm-plus" data-tm="plus">+1 ronde</button></div>' : ''}
-    <div class="tm-btns">${paused ? '<button data-tm="resume">Hervat</button>' : '<button data-tm="pause">Pauze</button>'}${type === 'fortime' ? '<button data-tm="done" class="tm-go">Klaar</button>' : '<button data-tm="stop">Stop</button>'}</div>
+    <div class="tm-btns ${M.locked ? 'is-locked' : ''}">${paused ? '<button data-tm="resume">Hervat</button>' : '<button data-tm="pause">Pauze</button>'}${type === 'fortime' ? '<button data-tm="done" class="tm-go">Klaar</button>' : '<button data-tm="stop">Stop</button>'}</div>
+    ${M.locked ? '<button class="tm-lock on" data-tm="unlock">🔒 Vergrendeld · houd 1 seconde ingedrukt om te ontgrendelen</button>' : '<button class="tm-lock" data-tm="lock">🔓 Vergrendel</button>'}
     ${showSound ? '<button class="tm-sound" data-tm="sound">Geluid staat uit: tik hier om het aan te zetten</button>' : ''}`;
 }
 

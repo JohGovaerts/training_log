@@ -180,11 +180,11 @@ export function resultText(cfg, { elapsedS = 0, rounds = 0, reps = 0, capHit = f
 
 // ---------- sound (browser only) ----------
 const TONES = {
-  pip: [[880, 0, 0.09]],
-  warn: [[740, 0, 0.1], [740, 0.18, 0.1]],
-  go: [[1320, 0, 0.55]],
-  work: [[1175, 0, 0.35]],
-  rest: [[523, 0, 0.4]],
+  pip: [[880, 0, 0.14]],
+  warn: [[740, 0, 0.16], [740, 0.24, 0.16]],
+  go: [[1320, 0, 0.7]],
+  work: [[1175, 0, 0.5]],
+  rest: [[523, 0, 0.6]],
   target: [[988, 0, 0.12], [988, 0.2, 0.12], [988, 0.4, 0.12]],
   end: [[1175, 0, 0.3], [1175, 0.4, 0.3], [1047, 0.8, 0.7]],
 };
@@ -203,6 +203,14 @@ export class Beeper {
       return true;
     } catch { return false; }
   }
+  // master compressor so overlapping loud tones don't clip
+  out() {
+    if (!this.master) {
+      const c = this.ctx.createDynamicsCompressor ? this.ctx.createDynamicsCompressor() : null;
+      if (c) { c.connect(this.ctx.destination); this.master = c; } else this.master = this.ctx.destination;
+    }
+    return this.master;
+  }
   get suspended() { return !!this.ctx && this.ctx.state !== 'running'; }
   resume() { try { return this.ctx?.resume(); } catch { return null; } }
   // play `type` after `delayS` seconds (>= 0)
@@ -211,11 +219,11 @@ export class Beeper {
     const t0 = this.ctx.currentTime + Math.max(0, delayS);
     for (const [freq, off, dur] of TONES[type] || []) {
       const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-      o.type = 'sine'; o.frequency.value = freq;
-      const a = t0 + off, v = Math.max(0.0001, this.volume);
+      o.type = 'square'; o.frequency.value = freq;   // square cuts through gym noise far better than a sine
+      const a = t0 + off, v = Math.max(0.0001, Math.min(1, this.volume * 1.25) * 0.8);
       g.gain.setValueAtTime(0.0001, a); g.gain.exponentialRampToValueAtTime(v, a + 0.01);
       g.gain.setValueAtTime(v, a + Math.max(0.01, dur - 0.04)); g.gain.exponentialRampToValueAtTime(0.0001, a + dur);
-      o.connect(g); g.connect(this.ctx.destination); o.start(a); o.stop(a + dur + 0.02);
+      o.connect(g); g.connect(this.out()); o.start(a); o.stop(a + dur + 0.02);
       this.nodes.push(o);
     }
     if (this.nodes.length > 40) this.nodes = this.nodes.slice(-20);

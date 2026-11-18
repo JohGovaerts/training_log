@@ -3,7 +3,8 @@ import * as Api from './api.js';
 import * as Rec from './records.js';
 import * as Ld from './loading.js';
 import * as Co from './coach.js';
-import * as TU from './timerui.js';
+import * as TU from './timerui.js'
+import * as In from './insights.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -15,7 +16,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, tmSound: true, tmVol: 0.8, tmFlash: true, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, tmSound: true, tmVol: 1, tmFlash: true, coachQuick: true, readiness: true, ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -27,6 +28,7 @@ const S = {
   dismissed: LS.get('dismissed', {}),
   missing: [], cycles: [],
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
+  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null,
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
   coach: { chat: [], cost: null, reactions: {}, err: null, busy: '', profile: null, memory: null, memTs: 0, memProposal: null, draft: '', ramp: {}, ...LS.get('coach', {}), err: null, busy: '', memProposal: null, ramp: {}, att: [] },
@@ -84,9 +86,11 @@ function rebuild() {
   if (hi < 0) { S.err = 'Geen kopregel gevonden. Dit tabblad moet de kolommen "Week" en "Piece" hebben.'; S.rows = []; S.map = null; return; }
   const { map, newHeaders, missingReq } = Sh.buildColumnMap(g[hi]);
   if (missingReq.length) { S.err = `Kolom(men) ontbreken in de sheet: ${missingReq.join(', ')}`; S.rows = []; S.map = null; return; }
+  if (S.queue.some((o) => (o.tab || S.settings.tab) === S.settings.tab && o.fields && 'readiness' in o.fields)) Sh.ensureCol(map, [], 'readiness');
   S.headerIdx = hi; S.map = map; S.newHeaders = newHeaders;
   const base = Sh.parseRows(g, hi, map, `${S.settings.tab}§`);
   for (const op of S.queue.filter((o) => (o.tab || S.settings.tab) === S.settings.tab)) {
+    if (op.type === 'extra') { g.push(Sh.extraRow(map, op.fields)); continue; }
     const cells = Sh.planWrites(base, map, op);
     if (cells) { Sh.applyCells(g, cells); S.pendingKeys.add(op.type === 'piece' ? op.key : dayKey(op.week, op.dayIdx)); }
   }
@@ -263,6 +267,7 @@ async function syncTab(tab) {
   const hi = Sh.findHeader(values);
   if (hi < 0) { keep(); if (tab === S.settings.tab) { rebuild(); throw new Error(S.err); } return { stuck: 0, added: [], done: 0 }; }
   const { map, newHeaders } = Sh.buildColumnMap(values[hi]);
+  if (S.queue.some((o) => (o.tab || S.settings.tab) === tab && o.fields && 'readiness' in o.fields)) Sh.ensureCol(map, newHeaders, 'readiness');
   const rows = Sh.parseRows(values, hi, map, `${tab}§`);
   const cells = [], done = [];
   const ops = S.queue.filter((o) => (o.tab || S.settings.tab) === tab);
@@ -280,8 +285,10 @@ async function syncTab(tab) {
     delete op.error; cells.push(...c); done.push(op);
   }
   const data = cells.map((c) => ({ range: Sh.a1(tab, c.row, c.col), values: [[c.value]] }));
-  await Api.batchUpdate(S.settings.sheetId, data);
+  if (data.length) await Api.batchUpdate(S.settings.sheetId, data);
   Sh.applyCells(values, cells);
+  const extras = done.filter((o) => o.type === 'extra').map((o) => Sh.extraRow(map, o.fields));
+  if (extras.length) { await Api.appendRows(S.settings.sheetId, tab, extras); values.push(...extras); }
   keep();
   S.queue = S.queue.filter((o) => !done.includes(o)); save.queue();
   return { stuck: ops.filter((o) => o.error).length, added: newHeaders, done: done.length };
@@ -379,18 +386,25 @@ function renderSoft() { if (typing()) renderChip(); else render(); }
 
 function render() {
   if (!configured()) { $app.innerHTML = settingsHTML(true); return; }
-  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '') + askHTML();
+  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '') + extraHTML() + askHTML();
   tick();
 }
 
 // Every API call to the coach is confirmed first: what is sent, how many requests, which model.
-function askCall({ title, body, n = 1, run }) {
+function askCall({ title, body, n = 1, run, extraChars = 800, model = '', history = false }) {
   if (S.coach.busy) return;
-  S.ask = { title, body, n, run }; render();
+  S.ask = { title, body, n, run, model: model || S.settings.coachModel, est: estTokens(extraChars, { history }) }; render();
 }
+function estTokens(extraChars, { history = false } = {}) {
+  const context = S.view ? Co.contextPack({ tab: S.settings.tab, rows: S.rows, week: S.view.week, dayIdx: S.view.dayIdx }) : '';
+  const system = Co.systemPrompt({ lang: coachLang(), profile: S.coach.profile || [], memory: S.coach.memory || [], context });
+  const prior = history ? S.coach.chat.slice(-12).reduce((a, m) => a + String(m.content || '').length, 0) : 0;
+  return In.estTokens(system.length + prior + extraChars);
+}
+const askCost = (a) => { const m = Co.MODELS[a.model] || Co.MODELS['claude-sonnet-5-5']; return a.n * (a.est * m.inUsd + 500 * m.outUsd) / 1e6; };
 function askHTML() {
   const a = S.ask; if (!a) return '';
-  return `<div class="sheetmodal askmodal"><div><h2>${esc(a.title)}</h2><p>${esc(a.body)}</p><p class="hint">${a.n} aanvraag${a.n > 1 ? 'en' : ''} naar de coach · ${esc(S.settings.coachModel)} · telt mee voor je maandlimiet.</p><div class="row2"><button class="btn" data-act="ask-no">Annuleer</button><button class="btn primary" data-act="ask-go">Verstuur</button></div></div></div>`;
+  return `<div class="sheetmodal askmodal"><div><h2>${esc(a.title)}</h2><p>${esc(a.body)}</p><p class="hint">${a.n} aanvraag${a.n > 1 ? 'en' : ''} naar de coach · ${esc(a.model)} · ongeveer ${(a.est * a.n).toLocaleString('nl-BE')} tokens invoer, kost ± ${Co.fmtUsd(askCost(a))} · telt mee voor je maandlimiet.</p><div class="row2"><button class="btn" data-act="ask-no">Annuleer</button><button class="btn primary" data-act="ask-go">Verstuur</button></div></div></div>`;
 }
 
 function mainHTML() {
@@ -399,7 +413,8 @@ function mainHTML() {
   if (S.err) return topHTML() + `<div class="setup"><div class="err">${esc(S.err)}</div><button class="btn" data-act="settings">Instellingen</button></div>`;
   if (!S.rows.length) return topHTML() + `<div class="rest"><b>Nog geen planning geladen</b>${S.sync.state === 'login' ? 'Log in om de sheet te laden.' : 'Even geduld…'}</div>`;
   const { week, dayIdx } = S.view;
-  return topHTML() + noticeHTML() + sessionBannerHTML() + dayHTML(week, dayIdx);
+  if (S.page === 'week') return topHTML() + weekHTML();
+  return topHTML() + noticeHTML() + painBarHTML() + readyBarHTML() + sessionBannerHTML() + dayHTML(week, dayIdx);
 }
 
 function noticeHTML() {
@@ -437,11 +452,11 @@ function topHTML() {
       <button class="iconbtn" data-tm="free" aria-label="Losse timer">⏲</button>
       <button class="iconbtn" data-act="refresh" aria-label="Verversen">↻</button>
       <button class="iconbtn" data-act="settings" aria-label="Instellingen">⚙</button></div>
-    <div class="seg"><button class="${train ? 'on' : ''}" data-act="page" data-p="train">Training</button><button class="${S.page === 'records' ? 'on' : ''}" data-act="page" data-p="records">Records</button><button class="${S.page === 'coach' ? 'on' : ''}" data-act="page" data-p="coach">Coach</button></div>
-    ${train && S.view ? `<div class="weeknav"><button class="iconbtn" data-act="week" data-d="-1" ${week <= ws[0] ? 'disabled' : ''} aria-label="Vorige week">‹</button>
+    <div class="seg"><button class="${train ? 'on' : ''}" data-act="page" data-p="train">Training</button><button class="${S.page === 'records' ? 'on' : ''}" data-act="page" data-p="records">Records</button><button class="${S.page === 'week' ? 'on' : ''}" data-act="page" data-p="week">Week</button><button class="${S.page === 'coach' ? 'on' : ''}" data-act="page" data-p="coach">Coach</button></div>
+    ${(train || S.page === 'week') && S.view ? `<div class="weeknav"><button class="iconbtn" data-act="week" data-d="-1" ${week <= ws[0] ? 'disabled' : ''} aria-label="Vorige week">‹</button>
       <div><b>${S.cycles.length === 1 ? `Cycle ${esc(S.cycles[0])} · ` : ''}Week ${week}</b><small>${range}</small></div>
-      <button class="iconbtn" data-act="week" data-d="1" ${week >= ws[ws.length - 1] ? 'disabled' : ''} aria-label="Volgende week">›</button></div>
-    <nav class="days">${tabs}</nav>` : ''}
+      <button class="iconbtn" data-act="week" data-d="1" ${week >= ws[ws.length - 1] ? 'disabled' : ''} aria-label="Volgende week">›</button></div>` : ''}
+    ${train && S.view ? `<nav class="days">${tabs}</nav>` : ''}
   </header>`;
 }
 
@@ -457,7 +472,7 @@ function dayHTML(week, dayIdx) {
   const dt = Sh.dateFor(curStart(), week, dayIdx);
   const title = `${Sh.DAYS_LONG[dayIdx]}${dt ? ` ${dt.getDate()}/${dt.getMonth() + 1}` : ''}`;
   if (!rs.length) {
-    return `<div class="dayhead"><h2>${title}</h2></div><div class="rest"><b>Rustdag 😴</b>Niets gepland. Herstel, slaap en eet goed.</div>`;
+    return `<div class="dayhead"><h2>${title}</h2></div><div class="daytools"><button class="btn" data-act="extra-open">＋ Extra sessie of les</button></div><div class="rest"><b>Rustdag 😴</b>Niets gepland. Herstel, slaap en eet goed.</div>`;
   }
   const focus = rs[0].focus;
   const optional = /optioneel/i.test(focus);
@@ -477,7 +492,11 @@ function dayHTML(week, dayIdx) {
     sessHTML = `<div class="session"><button class="go" data-act="sess-start">▶ Start training</button><button class="btn link" data-act="sess-edit">tijden invullen</button></div>`;
   }
   const firstOpen = rs.find((r) => Sh.status(r) === 'open');
-  return `<div class="dayhead"><h2>${title}${optional ? '<span class="badge">optioneel</span>' : ''}</h2><p>${esc(focus)} · ${done}/${rs.length} gelogd</p></div>
+  const tm = In.dayTimes(rs);
+  const timeTxt = tm.planned ? ` · gepland ${tm.planned}'${tm.real != null ? ` · <b class="tm-${In.overTone(tm.planned, tm.real)}">echt ${tm.real}'</b>` : ''}` : '';
+  return `<div class="dayhead"><h2>${title}${optional ? '<span class="badge">optioneel</span>' : ''}</h2><p>${esc(focus)} · ${done}/${rs.length} gelogd${timeTxt}</p></div>
+    ${(rs.find((r) => r.readiness) || {}).readiness ? `<div class="readyline">🔋 ${esc(rs.find((r) => r.readiness).readiness)}</div>` : ''}
+    <div class="daytools"><button class="btn" data-act="gym-open">🏋 Gym-modus</button><button class="btn" data-act="extra-open">＋ Extra sessie of les</button></div>
     ${sessHTML}${rs.map((r) => pieceHTML(r, S.open[r.key] ?? (firstOpen && firstOpen.key === r.key))).join('')}${coachDayHTML(week, dayIdx, rs)}`;
 }
 
@@ -563,7 +582,19 @@ const pctTxt = (ratio) => {
 const ageTxt = (iso) => { const m = Rec.monthsSince(iso); return m == null ? '' : m < 1 ? '< 1 mnd' : m < 24 ? `${Math.round(m)} mnd` : `${(m / 12).toFixed(1).replace('.', ',')} jaar`; };
 const refTxt = (rec, ref) => (ref ? `${ref.kind === 'est' ? 'schatting ' : 'PB '}${Rec.fmtValue(rec, ref)}${ref.date ? ` · ${Rec.fmtDateNL(ref.date)}` : ''}` : '');
 
+function prevHTML(it) {
+  const kind = Sh.pieceKind(it);
+  if (kind === 'warmup' || kind === 'mobility') return '';
+  const p = In.prevLog(S.logs, it, S.settings.tab); if (!p) return '';
+  const first = p.actual.split('\n')[0].slice(0, 90);
+  const bits = [p.date && Rec.fmtDateNL(p.date), p.rpe && `RPE ${p.rpe}`, ['Ja', 'Misschien'].includes(p.badDay) && 'slechte dag'].filter(Boolean).join(' · ');
+  return `<div class="last"><span class="k">Vorige keer</span> <b>${esc(first)}</b> <small>${esc(bits)}</small></div>`;
+}
 function lastHTML(it) {
+  const r = recLastHTML(it);
+  return r.includes('Vorige keer') ? r : r + prevHTML(it);
+}
+function recLastHTML(it) {
   if (!S.ledger || !S.ledger.records) return '';
   const rec = Rec.recordFor(it.piece, it.benchmark, S.ledger.records);
   if (!rec) return '';
@@ -636,7 +667,177 @@ function recordsHTML() {
   }
   const upd = S.ledger.ts ? `Bijgewerkt ${Sh.fmtHM(S.ledger.ts)}` : '';
   return head + (S.extrasErr ? `<div class="err">${esc(S.extrasErr)}</div>` : '') +
-    `<p class="hintline">${upd}${S.extrasBusy ? ' · verversen…' : ''} · Betrouwbaarheid is een indicatie op basis van leeftijd, testtype en noot.</p><div id="reclist">${recListHTML()}</div>`;
+    `${trendsHTML()}<p class="hintline">${upd}${S.extrasBusy ? ' · verversen…' : ''} · Betrouwbaarheid is een indicatie op basis van leeftijd, testtype en noot.</p><div id="reclist">${recListHTML()}</div>`;
+}
+
+// ---------- readiness bij sessiestart ----------
+function readyBarHTML() {
+  if (S.settings.readiness === false || !S.view || !S.rows.length) return '';
+  const { week, dayIdx } = S.view, today = Sh.todayPosition(curStart());
+  if (!today || today.week !== week || today.dayIdx !== dayIdx) return '';
+  const rs = rowsOf(week, dayIdx);
+  if (!rs.length || rs.some((r) => r.readiness && r.readiness.trim()) || rs.some((r) => Sh.status(r) !== 'open')) return '';
+  if (S.dismissed[`ready|${S.settings.tab}|${week}|${dayIdx}`]) return '';
+  const row = (k) => `<div class="lbl">${In.READY_LABELS[k]}<div class="chips">${In.READY_OPTS[k].map((v) => `<button type="button" data-act="ready-set" data-k="${k}" data-v="${v}" class="${S.ready[k] === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`;
+  return `<div class="painbar readybar"><b>Hoe sta je erbij vandaag?</b><small>3 tikken, de coach neemt het mee</small>${row('sl')}${row('sp')}${row('st')}
+    <div class="row2"><button class="btn primary" data-act="ready-save" ${In.readyComplete(S.ready) ? '' : 'disabled'}>Opslaan</button><button class="btn link" data-act="ready-skip">Overslaan</button></div></div>`;
+}
+function readyAction(a, b) {
+  if (a === 'ready-set') { S.ready[b.dataset.k] = S.ready[b.dataset.k] === b.dataset.v ? '' : b.dataset.v; render(); return; }
+  const { week, dayIdx } = S.view;
+  if (a === 'ready-skip') { S.dismissed[`ready|${S.settings.tab}|${week}|${dayIdx}`] = 1; save.dismissed(); render(); return; }
+  if (!In.readyComplete(S.ready)) return;
+  S.queue.push({ type: 'session', tab: S.settings.tab, week, dayIdx, fields: { readiness: In.readyText(S.ready) }, at: Date.now() });
+  S.ready = { sl: '', sp: '', st: '' }; save.queue();
+  rebuild(); render(); toast('Genoteerd ✓'); kickSync(true);
+}
+
+// ---------- extra sessie of les ----------
+function extraHTML() {
+  const x = S.extra; if (!x) return '';
+  const open = rowsOf(S.view.week, S.view.dayIdx).filter((r) => Sh.status(r) === 'open');
+  return `<div class="sheetmodal"><div><div class="setup"><h1>Extra sessie of les</h1>
+    <p class="hint">${Sh.DAYS_LONG[S.view.dayIdx]} week ${S.view.week}. Komt als rij met Focus "Extra" in je sheet.</p>
+    <label>Titel<input id="x-title" value="${esc(x.title)}" placeholder="bv. CrossFit-les 18u" autocomplete="off"></label>
+    <label>Resultaat of notitie<textarea id="x-actual" rows="4" placeholder="bv. WOD Fran 5:10, of: les gegeven, lichte squats">${esc(x.actual)}</textarea></label>
+    <div class="row2"><label>RPE<select id="x-rpe"><option value=""></option>${['5', '6', '7', '8', '9', '10'].map((v) => `<option ${x.rpe === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label>Duur (min)<input id="x-dur" type="number" inputmode="numeric" min="0" value="${esc(x.dur)}"></label></div>
+    ${open.length ? `<label>Vervangt dit geplande onderdeel (optioneel)<select id="x-rep"><option value="">Niets</option>${open.map((r) => `<option value="${esc(r.key)}" ${x.replace === r.key ? 'selected' : ''}>${esc(r.piece)}</option>`).join('')}</select><span class="hint">Het onderdeel krijgt "Vervangen door les" en telt niet als gemist.</span></label>` : ''}
+    <button class="btn primary" data-act="extra-save">Toevoegen</button><button class="btn" data-act="extra-cancel">Annuleer</button></div></div></div>`;
+}
+function saveExtra() {
+  const g = (id) => document.getElementById(id)?.value ?? '';
+  const title = g('x-title').trim();
+  if (!title) { toast('Geef de sessie een titel.'); return; }
+  const { week, dayIdx } = S.view, tab = S.settings.tab, stamp = Sh.fmtStamp(Date.now());
+  const fields = { cycle: String(Sh.cycleNum(tab) ?? ''), week: String(week), dag: Sh.DAYS[dayIdx], focus: 'Extra', piece: `Les: ${title}`,
+    actual: g('x-actual').trim() || 'Gedaan', rpe: g('x-rpe'), dur: g('x-dur'), loggedAt: stamp };
+  S.queue.push({ type: 'extra', tab, week, dayIdx, fields, at: Date.now() });
+  const rep = g('x-rep'), it = rep && currentItem(rep);
+  if (it) S.queue.push({ type: 'piece', tab, key: rep, fields: { actual: 'Vervangen door les', loggedAt: stamp }, base: { actual: it.actual }, at: Date.now() });
+  S.extra = null; save.queue(); rebuild(); render(); toast('Extra sessie toegevoegd ✓'); kickSync(true);
+}
+
+// ---------- gym-modus ----------
+let $gym = null, gymKey = '', gymLock = null;
+async function gymWake() { try { if (navigator.wakeLock && !gymLock) { gymLock = await navigator.wakeLock.request('screen'); gymLock.addEventListener?.('release', () => { gymLock = null; }); } } catch { /* optional */ } }
+function gymOpen() {
+  const rs = rowsOf(S.view.week, S.view.dayIdx); if (!rs.length) return;
+  gymKey = (rs.find((r) => Sh.status(r) === 'open') || rs[0]).key;
+  if (!$gym) {
+    $gym = document.createElement('div'); $gym.id = 'gym'; document.body.appendChild($gym);
+    $gym.addEventListener('click', (e) => {
+      if (e.target.closest('[data-tm]')) { TU.click(e); setTimeout(renderGym, 0); return; }
+      const b = e.target.closest('[data-gym]'); if (!b) return;
+      const it = currentItem(gymKey), rs2 = it ? rowsOf(it.week, it.dayIdx) : [], i = rs2.findIndex((r) => r.key === gymKey);
+      if (b.dataset.gym === 'prev' && i > 0) gymKey = rs2[i - 1].key;
+      else if (b.dataset.gym === 'next' && i < rs2.length - 1) gymKey = rs2[i + 1].key;
+      else if (b.dataset.gym === 'close') return gymClose();
+      else if (b.dataset.gym === 'log') { const k = gymKey; gymClose(); S.open[k] = true; render(); document.querySelector(`[data-key="${CSS.escape(k)}"]`)?.scrollIntoView({ block: 'start' }); return; }
+      renderGym();
+    });
+  }
+  $gym.hidden = false; document.body.classList.add('gym-open'); gymWake(); renderGym();
+}
+function gymClose() { if ($gym) $gym.hidden = true; document.body.classList.remove('gym-open'); try { gymLock?.release(); } catch { /* ignore */ } gymLock = null; }
+function renderGym() {
+  if (!$gym || $gym.hidden) return;
+  const it = currentItem(gymKey); if (!it) { gymClose(); return; }
+  const rs = rowsOf(it.week, it.dayIdx), i = rs.findIndex((r) => r.key === gymKey);
+  $gym.innerHTML = `<div class="gym-top"><span>${i + 1} van ${rs.length} · ${esc(it.focus)}</span><button data-gym="close" aria-label="Sluiten">✕</button></div>
+    <h1>${esc(it.piece)}</h1><div class="gym-rx">${esc(it.prescribed)}</div>${calcHTML(it)}
+    ${it.intent ? `<div class="gym-intent">${esc(it.intent)}</div>` : ''}${lastHTML(it)}
+    <div class="gym-btns">${TU.pieceButtons(it)}</div>
+    <div class="gym-nav"><button data-gym="prev" ${i <= 0 ? 'disabled' : ''}>‹ Vorige</button><button data-gym="log" class="primary">Loggen</button><button data-gym="next" ${i >= rs.length - 1 ? 'disabled' : ''}>Volgende ›</button></div>`;
+}
+
+// ---------- CSV-back-up ----------
+async function exportCsv() {
+  if (!S.rows.length) { toast('Nog niets om te exporteren.'); return; }
+  const name = `${(S.settings.tab || 'training-log').replace(/[^A-Za-z0-9_-]+/g, '-')}-${today()}.csv`;
+  const file = new File([In.toCsv(S.rows)], name, { type: 'text/csv' });
+  try { if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e?.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('CSV gedownload ✓');
+}
+
+// ---------- pijncheck de dag erna ----------
+const PAIN_AREAS = ['Geen klachten', 'Knie', 'Schouder', 'Elleboog', 'Rug', 'Anders'];
+const painCand = () => (S.rows.length ? In.painCandidate(S.rows, new Date(), S.dismissed, S.settings.tab) : null);
+function painBarHTML() {
+  const c = painCand(); if (!c) return '';
+  const sel = S.pain.sel, any = sel.length && !sel.includes('Geen klachten');
+  return `<div class="painbar"><b>Hoe voelt het vandaag?</b><small>na ${Sh.DAYS_LONG[c.dayIdx].toLowerCase()} (${esc(c.reason)})</small>
+    <div class="chips">${PAIN_AREAS.map((a) => `<button type="button" data-act="pain-area" data-v="${a}" class="${sel.includes(a) ? 'on' : ''}">${a}</button>`).join('')}</div>
+    ${any ? `<div class="lbl">Hoe erg? (0 tot 10, optioneel)<div class="chips sc">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => `<button type="button" data-act="pain-score" data-v="${n}" class="${String(S.pain.score) === String(n) ? 'on' : ''}">${n}</button>`).join('')}</div></div>` : ''}
+    <div class="row2"><button class="btn primary" data-act="pain-save" ${sel.length ? '' : 'disabled'}>Opslaan</button><button class="btn link" data-act="pain-skip">Overslaan</button></div></div>`;
+}
+function painAction(a, v) {
+  if (a === 'pain-area') {
+    let sel = S.pain.sel.slice();
+    if (v === 'Geen klachten') sel = sel.includes(v) ? [] : [v];
+    else { sel = sel.filter((x) => x !== 'Geen klachten'); sel = sel.includes(v) ? sel.filter((x) => x !== v) : [...sel, v]; }
+    S.pain.sel = sel; if (!sel.length || sel.includes('Geen klachten')) S.pain.score = '';
+    render(); return;
+  }
+  if (a === 'pain-score') { S.pain.score = String(S.pain.score) === String(v) ? '' : v; render(); return; }
+  const c = painCand(); if (!c) return;
+  const mark = `pain|${S.settings.tab}|${c.groupKey}`;
+  if (a === 'pain-skip') { S.dismissed[mark] = 1; save.dismissed(); S.pain = { sel: [], score: '' }; render(); return; }
+  const it = currentItem(c.key); if (!it) return;
+  const text = In.painText(S.pain.sel, S.pain.score);
+  const [p, after] = Sh.splitPain(it.pain);
+  const pain = Sh.joinPain(p, after ? `${after}; ${text}` : text);
+  S.queue.push({ type: 'piece', tab: S.settings.tab, key: c.key, fields: { pain }, base: { pain: it.pain }, at: Date.now() });
+  S.dismissed[mark] = 1; save.dismissed(); save.queue();
+  S.pain = { sel: [], score: '' };
+  rebuild(); render(); toast('Genoteerd ✓'); kickSync(true);
+}
+
+// ---------- weekoverzicht ----------
+const fmtKg = (n) => `${Math.round(n).toLocaleString('nl-BE')} kg`;
+function weekHTML() {
+  const { week } = S.view;
+  const s = In.weekSummary(S.rows, week);
+  if (!s.days.length) return '<div class="rest"><b>Geen sessies deze week</b>Er staat niets gepland.</div>';
+  const stat = (k, v, sub = '') => `<div class="stat"><small>${k}</small><b>${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const tone = In.overTone(s.planned, s.real);
+  const cards = [
+    stat('Sessies', `${s.sessions}/${s.sessionsPlanned}`, s.coreTotal ? `kern ${s.coreDone}/${s.coreTotal}` : ''),
+    stat('Onderdelen', `${s.pieces}/${s.piecesTotal}`, s.skipped ? `${s.skipped} overgeslagen` : ''),
+    s.real ? stat('Tijd', `<span class="tm-${tone}">${s.real}'</span>`, `gepland ${s.planned}'`) : stat('Tijd', '—', 'nog niets gemeten'),
+    stat('RPE gem.', s.rpe != null ? s.rpe.toFixed(1).replace('.', ',') : '—'),
+    stat('Volume', s.tonnage ? fmtKg(s.tonnage) : '—', 'indicatief, kracht'),
+    stat('Let op', s.painDays || s.badDays ? `${s.painDays} pijn` : 'niets', s.badDays ? `${s.badDays} slechte dag${s.badDays > 1 ? 'en' : ''}` : 'geen meldingen'),
+  ].join('');
+  const days = s.days.map((d) => {
+    const dt = Sh.dateFor(curStart(), week, d.dayIdx);
+    const t = d.real != null ? ` · <span class="tm-${In.overTone(d.planned, d.real)}">${d.real}'</span>/${d.planned}'` : d.planned ? ` · ${d.planned}' gepland` : '';
+    const cls = d.done === d.total ? 'done' : d.done ? 'part' : '';
+    return `<button class="wkday ${cls}" data-act="wkday" data-i="${d.dayIdx}"><span class="wd">${Sh.DAYS[d.dayIdx]}${dt ? `<small>${dt.getDate()}/${dt.getMonth() + 1}</small>` : ''}</span>
+      <span class="wf">${esc(d.focus)}${d.optional ? '' : ''}<small>${d.done}/${d.total} gelogd${d.skipped ? ` · ${d.skipped} skip` : ''}${t}${d.rpe != null ? ` · RPE ${d.rpe.toFixed(1).replace('.', ',')}` : ''}${d.pain ? ' · ⚠ pijn' : ''}${d.bad ? ' · slechte dag' : ''}</small></span></button>`;
+  }).join('');
+  return `<div class="dayhead"><h2>Week ${week}</h2><p>Berekend in de app, zonder coach.</p></div><div class="stats">${cards}</div><div class="wkdays">${days}</div>`;
+}
+
+// ---------- trends (Records) ----------
+function spark(pts) {
+  const vs = pts.map((p) => p.v), lo = Math.min(...vs), hi = Math.max(...vs), span = hi - lo || 1;
+  const W = 110, H = 28, xy = pts.map((p, i) => [Math.round((i / (pts.length - 1)) * (W - 6) + 3), Math.round(H - 4 - ((p.v - lo) / span) * (H - 8))]);
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${xy.map((q) => q.join(',')).join(' ')}"/>${xy.map((q, i) => `<circle cx="${q[0]}" cy="${q[1]}" r="${pts[i].bad ? 3 : 2}" fill="${pts[i].bad ? 'var(--warn)' : 'currentColor'}"/>`).join('')}</svg>`;
+}
+function trendsHTML() {
+  const lifts = In.liftSeries(S.logs), wk = In.weekTrend(S.grids).slice(-10);
+  if (!lifts.length && !wk.length) return '';
+  const cyc = (t) => { const n = Sh.cycleNum(t); return n != null ? `C${n}` : t; };
+  const l = lifts.map((x) => {
+    const first = x.pts[0].v, last = x.pts[x.pts.length - 1].v, d = last - first;
+    return `<div class="tr"><span class="trn">${esc(x.label)}<small>${x.pts.length} metingen</small></span>${spark(x.pts)}<span class="trv"><b>${Math.round(last)} kg</b><small>${d >= 0 ? '+' : '−'}${Math.abs(Math.round(d))} kg</small></span></div>`;
+  }).join('');
+  const w = wk.map((x) => `<div class="trw"><span>${cyc(x.tab)} W${x.week}</span><span>${x.sessions} sessie${x.sessions === 1 ? '' : 's'}</span><span class="bar"><i style="width:${x.rpe != null ? Math.round(x.rpe * 10) : 0}%"></i></span><span>${x.rpe != null ? x.rpe.toFixed(1).replace('.', ',') : '—'}</span></div>`).join('');
+  return `<details class="trends"><summary>Trends</summary>
+    ${l ? `<h4>Geschatte 1RM per lift</h4><p class="hintline">Beste set per sessie, berekend uit je gelogde sets (Brzycki). Oranje punt = slechte dag.</p>${l}` : ''}
+    ${w ? `<h4>Sessies en gemiddelde RPE per week</h4>${w}` : ''}</details>`;
 }
 
 function settingsHTML(first) {
@@ -644,7 +845,7 @@ function settingsHTML(first) {
   const connected = S.tabs.length > 0 || s.tab;
   const body = `<div class="setup">
     <h1>${first ? 'Koppel je planning' : 'Instellingen'}</h1>
-    ${first ? '<p>Eenmalig instellen. Zie de README voor het aanmaken van een Google client-ID (5 min).</p>' : ''}
+    ${first ? '<p>Eenmalig instellen, in 3 stappen:</p><ol class="steps"><li><b>Google client-ID</b> invullen (aanmaken: zie de README, 5 min).</li><li><b>Link naar je Google Sheet</b> plakken en op Verbinden tikken.</li><li>Je <b>tabblad (cyclus)</b> kiezen en de <b>maandag van week 1</b> invullen. Klaar: de planning verschijnt.</li></ol>' : ''}
     ${S.formErr ? `<div class="err">${esc(S.formErr)}</div>` : ''}
     <label>Google client-ID<input id="f-client" value="${esc(s.clientId)}" placeholder="123…apps.googleusercontent.com" autocomplete="off" autocapitalize="off"></label>
     <label>Link naar je Google Sheet<input id="f-sheet" value="${esc(s.sheetId ? `https://docs.google.com/spreadsheets/d/${s.sheetId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"></label>
@@ -659,14 +860,17 @@ function settingsHTML(first) {
       <label>Volume<input type="range" id="f-tmvol" min="0.1" max="1" step="0.1" value="${esc(s.tmVol ?? 0.8)}"></label>
       <label class="toggle"><input type="checkbox" id="f-tmflash" ${s.tmFlash !== false ? 'checked' : ''}> Scherm flitst bij een signaal</label></div></details>
     <label class="toggle"><input type="checkbox" id="f-autonext" ${s.autoNext ? 'checked' : ''}> Volgende timer automatisch starten na opslaan</label>
+    <label class="toggle"><input type="checkbox" id="f-ready" ${s.readiness !== false ? 'checked' : ''}> Readiness-check bij sessiestart (slaap, spierpijn, stress)</label>
     <details ${s.coachKey ? 'open' : ''}><summary>Coach (optioneel)</summary><div class="coachset">
       <label>Anthropic API-sleutel<input id="f-ckey" type="password" value="${esc(s.coachKey)}" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off"><span class="hint">Blijft alleen op dit toestel (en gaat enkel naar Anthropic). Zonder sleutel werkt de app volledig, behalve de coach.</span></label>
       <label>Model<select id="f-cmodel">${Object.entries(Co.MODELS).map(([id, m]) => `<option value="${id}" ${s.coachModel === id ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label>
       <label>Taal van de coach<select id="f-clang"><option value="nl" ${s.coachLang !== 'en' ? 'selected' : ''}>Nederlands</option><option value="en" ${s.coachLang === 'en' ? 'selected' : ''}>English</option></select></label>
       <label>Eigen maandlimiet (USD, 0 = geen)<input id="f-climit" type="number" min="0" step="1" value="${esc(s.coachLimit)}" inputmode="decimal"><span class="hint">De app waarschuwt bij 80% en pauzeert de coach bij 100%. Stel in de Anthropic Console ook een harde limiet in.</span></label>
       <label>Link naar je coach-project (optioneel)<input id="f-curl" value="${esc(s.coachUrl)}" placeholder="https://claude.ai/project/…" autocomplete="off" autocapitalize="off"></label>
+      <label class="toggle"><input type="checkbox" id="f-cquick" ${s.coachQuick !== false ? 'checked' : ''}> Losse vragen met Haiku (goedkoper); reacties en weekoverzicht gebruiken het model hierboven</label>
       <label class="toggle"><input type="checkbox" id="f-cauto" ${s.coachAuto ? 'checked' : ''}> Automatisch coach-reactie na een afgeronde sessie</label>
       <label class="toggle"><input type="checkbox" id="f-clog" ${s.coachLog ? 'checked' : ''}> Reacties en wijzigingen bewaren in tab "Coach log" (je project kan ze lezen)</label></div></details>
+    <button class="btn" data-act="csv">Logboek van dit tabblad exporteren (CSV)</button>
     <button class="btn primary" data-act="settings-save">Opslaan</button>` : ''}
     ${!first ? '<button class="btn" data-act="settings-close">Terug</button><button class="btn link" data-act="logout">Uitloggen</button>' : ''}
   </div>`;
@@ -703,19 +907,20 @@ function coachFail(e) {
   return info;
 }
 
-async function coachCall(userText, { history = false, maxTokens = 900, withContext = true, images = [] } = {}) {
+async function coachCall(userText, { history = false, maxTokens = 900, withContext = true, images = [], model = S.settings.coachModel } = {}) {
   const blk = coachBlock();
   if (blk.blocked) throw new Co.CoachError({ kind: 'blocked', title: blk.reason, msg: blk.reason });
   const context = withContext && S.view ? Co.contextPack({ tab: S.settings.tab, rows: S.rows, week: S.view.week, dayIdx: S.view.dayIdx }) : '';
   const system = Co.systemPrompt({ lang: coachLang(), profile: S.coach.profile || [], memory: S.coach.memory || [], context });
   const prior = history ? S.coach.chat.slice(-12).map((m) => ({ role: m.role, content: m.content })) : [];
   const messages = Co.withImages(Co.normalizeMessages([...prior, { role: 'user', content: userText }]), images);
-  const r = await Co.callClaude({ key: S.settings.coachKey.trim(), model: S.settings.coachModel, system, messages, maxTokens });
-  S.coach.cost = Co.addCost(S.coach.cost, S.settings.coachModel, r.usage);
+  const r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
+  S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
   S.coach.err = null; save.coach();
   return r.text;
 }
 
+const quickModel = () => (S.settings.coachQuick !== false ? 'claude-haiku-5-5' : S.settings.coachModel);
 function setBusy(v) {
   S.coach.busy = v;
   const focused = document.activeElement?.id === 'cdraft';
@@ -803,7 +1008,7 @@ async function coachSend() {
   const keep = S.coach.draft; S.coach.draft = ''; S.coach.att = [];
   setBusy('chat');
   try {
-    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att });
+    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att, model: quickModel() });
     S.coach.chat.push(assistantMsg(reply)); save.coach();
   } catch (e) {
     S.coach.chat.pop(); S.coach.draft = keep; S.coach.att = att;   // nothing lost: question and attachments are back
@@ -1018,6 +1223,8 @@ function readSettingsForm() {
   if (g('f-bar')) S.settings.barKg = +g('f-bar').value === 15 ? 15 : 20;
   if (g('f-timers')) S.settings.timers = g('f-timers').checked;
   if (g('f-autonext')) S.settings.autoNext = g('f-autonext').checked;
+  if (g('f-ready')) S.settings.readiness = g('f-ready').checked;
+  if (g('f-cquick')) S.settings.coachQuick = g('f-cquick').checked;
   if (g('f-tmsound')) S.settings.tmSound = g('f-tmsound').checked;
   if (g('f-tmvol')) S.settings.tmVol = +g('f-tmvol').value || 0.8;
   if (g('f-tmflash')) S.settings.tmFlash = g('f-tmflash').checked;
@@ -1082,6 +1289,15 @@ $app.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act, key = b.dataset.key;
   switch (act) {
+    case 'ready-set': case 'ready-save': case 'ready-skip': readyAction(b.dataset.act, b); break;
+    case 'extra-open': S.extra = { title: '', actual: '', rpe: '', dur: '', replace: '' }; render(); break;
+    case 'extra-cancel': S.extra = null; render(); break;
+    case 'extra-save': saveExtra(); break;
+    case 'gym-open': gymOpen(); break;
+    case 'csv': exportCsv(); break;
+    case 'pain-area': case 'pain-score': painAction(b.dataset.act, b.dataset.v); break;
+    case 'pain-save': case 'pain-skip': painAction(b.dataset.act); break;
+    case 'wkday': S.view.dayIdx = +b.dataset.i; S.page = 'train'; S.editSession = false; save.view(); render(); window.scrollTo(0, 0); break;
     case 'day': S.view.dayIdx = +b.dataset.i; S.editSession = false; save.view(); render(); window.scrollTo(0, 0); break;
     case 'week': { const ws = weeks(); const i = ws.indexOf(S.view.week) + +b.dataset.d; if (ws[i] != null) { S.view.week = ws[i]; S.editSession = false; save.view(); render(); } break; }
     case 'toggle': { const it = currentItem(key); const firstOpen = rowsOf(it.week, it.dayIdx).find((r) => Sh.status(r) === 'open'); const cur = S.open[key] ?? (firstOpen && firstOpen.key === key); S.open[key] = !cur; render(); break; }
@@ -1114,13 +1330,13 @@ $app.addEventListener('click', (e) => {
     case 'coach-day': askReact(S.view.week, S.view.dayIdx); break;
     case 'coach-redo': askReact(S.view.week, S.view.dayIdx); break;
     case 'coach-ask-day': S.coach.draft = ''; S.page = 'coach'; render(); document.getElementById('cdraft')?.focus(); coachLoad(); break;
-    case 'coach-week': askCall({ title: 'Weekoverzicht vragen?', body: `De coach leest alle sessies van week ${S.view.week} en maakt een overzicht. Daarna doet hij (2e aanvraag) een voorstel wat hij mag onthouden; dat bewaart pas als jij het goedkeurt.`, n: 2, run: coachWeek }); break;
+    case 'coach-week': askCall({ title: 'Weekoverzicht vragen?', body: `De coach leest alle sessies van week ${S.view.week} en maakt een overzicht. Daarna doet hij (2e aanvraag) een voorstel wat hij mag onthouden; dat bewaart pas als jij het goedkeurt.`, n: 2, extraChars: 4000, run: coachWeek }); break;
     case 'ask-go': { const r = S.ask && S.ask.run; S.ask = null; render(); if (r) r(); break; }
     case 'ask-no': S.ask = null; render(); break;
     case 'coach-send': {
       const t = (S.coach.draft || '').trim(), na = S.coach.att.length;
       if (!t && !na) break;
-      askCall({ title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
+      askCall({ model: quickModel(), history: true, extraChars: (t || '').length + na * 1500, title: 'Vraag stellen aan de coach?', body: `${t ? `"${t.length > 160 ? t.slice(0, 160) + '…' : t}"` : 'Je bijlagen zonder tekst.'}${na ? ` + ${na} beeld(en) (kost extra tokens).` : ''} De coach krijgt ook je profiel, geheugen en de huidige sessie mee.`, run: coachSend });
       break;
     }
     case 'coach-retry': S.coach.err = null; render(); break;
