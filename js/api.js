@@ -80,7 +80,8 @@ const quote = (tab) => `'${String(tab).replace(/'/g, "''")}'`;
 
 export async function getMeta(id) {
   const j = await call(`${SHEETS}/${id}?fields=properties.title,sheets.properties(sheetId,title)`);
-  return { title: j.properties?.title || '', tabs: (j.sheets || []).map((s) => s.properties.title) };
+  const ids = {}; for (const s of j.sheets || []) ids[s.properties.title] = s.properties.sheetId;
+  return { title: j.properties?.title || '', tabs: (j.sheets || []).map((s) => s.properties.title), ids };
 }
 
 export async function getValues(id, tab) {
@@ -94,6 +95,13 @@ export async function batchUpdate(id, data) {
     method: 'POST',
     body: JSON.stringify({ valueInputOption: 'RAW', data }),
   });
+}
+
+// Move whole rows (a move = {from, dest}: 0-based row indexes, `dest` in the coordinates before removal). Applied in order.
+export async function moveRows(id, sheetId, moves) {
+  const requests = moves.map((m) => ({ moveDimension: { source: { sheetId, dimension: 'ROWS', startIndex: m.from, endIndex: m.from + 1 }, destinationIndex: m.dest } }));
+  if (!requests.length) return;
+  await call(`${SHEETS}/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) });
 }
 
 // ---- coach tabs (profile / memory): create when missing, replace contents ----

@@ -182,6 +182,68 @@ export function planWrites(rows, map, op) {
   return cells;
 }
 
+// ---- moving pieces to another day/week --------------------------------------
+// op: { type:'move', moves:[{ key, week, dayIdx }] }. Only open (unlogged) rows move. Pure: works on a copy of `values`.
+// Returns { cells, moves:[{from,dest}], grid, moved, skipped, renamed } where `cells` use the row numbers before reordering.
+const DAY_LEVEL = ['sStart', 'sEnd', 'readiness', 'polar'];
+const numbered = (name, taken) => {
+  if (!taken.has(name)) return name;
+  const m = /^(.*) \((\d+)\)$/.exec(name);
+  const stem = m && +m[2] < 50 ? m[1] : name;
+  for (let n = m && +m[2] < 50 ? +m[2] + 1 : 2; n < 200; n++) if (!taken.has(`${stem} (${n})`)) return `${stem} (${n})`;
+  return name;
+};
+export function planMove(values, hi, map, op, prefix = '') {
+  const rows = parseRows(values, hi, map, prefix);
+  const items = [], skipped = [];
+  for (const m of op.moves || []) {
+    const r = rows.find((x) => x.key === m.key);
+    if (!r || status(r) !== 'open') skipped.push(m); else items.push({ m, r });
+  }
+  const moving = new Set(items.map((i) => i.r.rowNum));
+  const taken = new Map();                                    // `${week}|${dayIdx}` -> Set(names)
+  const add = (w, d, name) => { const k = `${w}|${d}`; if (!taken.has(k)) taken.set(k, new Set()); taken.get(k).add(name); };
+  for (const r of rows) if (!moving.has(r.rowNum)) add(r.week, r.dayIdx, r.piece);
+  const cells = [], renamed = [];
+  for (const { m, r } of items) {
+    const k = `${m.week}|${m.dayIdx}`, set = taken.get(k) || new Set();
+    const name = numbered(m.piece || r.piece, set);
+    add(m.week, m.dayIdx, name);
+    cells.push({ row: r.rowNum, col: map.week, value: String(m.week) }, { row: r.rowNum, col: map.dag, value: DAYS[m.dayIdx] });
+    if (name !== r.piece) { cells.push({ row: r.rowNum, col: map.piece, value: name }); renamed.push({ from: r.piece, to: name }); }
+    r.__final = name;
+    for (const f of DAY_LEVEL) if (f in map && String(r[f] || '').trim()) cells.push({ row: r.rowNum, col: map[f], value: '' });
+  }
+  const sim = values.map((x) => x.slice());
+  applyCells(sim, cells);
+  const arrs = items.map((i) => sim[i.r.rowNum - 1]);
+  const pos = (row) => { const w = parseInt(String(row[map.week] ?? '').trim(), 10); return Number.isFinite(w) ? w * 10 + Math.max(0, dayIndex(row[map.dag])) : null; };
+  const moves = [];
+  const pending = new Set(arrs);                              // moved rows not placed yet: they do not count as anchors
+  items.forEach(({ m }, i) => {
+    const arr = arrs[i], from = sim.indexOf(arr);
+    sim.splice(from, 1);
+    const target = m.week * 10 + m.dayIdx;
+    let last = null, firstGreater = null;
+    for (const row of sim) {
+      if (pending.has(row)) continue;
+      const p = pos(row); if (p == null) continue;
+      if (p === target) last = row; else if (p > target && !firstGreater) firstGreater = row;
+    }
+    // sheet header rows (index <= hi) are never anchors: pos() is null for them
+    let dest = last ? sim.indexOf(last) + 1 : firstGreater ? sim.indexOf(firstGreater) : sim.length;
+    if (m.afterName !== undefined) {                          // undo: back to the original place inside the day
+      const group = sim.filter((row) => !pending.has(row) && pos(row) === target);
+      if (m.afterName === null && group.length) dest = sim.indexOf(group[0]);
+      else if (m.afterName !== null) { const a = group.find((row) => String(row[map.piece] ?? '').trim() === m.afterName); if (a) dest = sim.indexOf(a) + 1; }
+    }
+    sim.splice(dest, 0, arr); pending.delete(arr);
+    if (dest !== from) moves.push({ from, dest: dest <= from ? dest : dest + 1 });
+  });
+  const placed = items.map(({ m, r }, i) => ({ oldKey: m.key, newRowNum: sim.indexOf(arrs[i]) + 1, from: { week: r.week, dayIdx: r.dayIdx, piece: r.piece }, name: r.__final }));
+  return { cells, moves, grid: sim, moved: items.length, skipped, renamed, placed };
+}
+
 export function findConflicts(row, op) {
   if (op.type !== 'piece' || !op.base || !row) return [];
   const out = [];

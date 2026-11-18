@@ -29,7 +29,7 @@ const S = {
   dismissed: LS.get('dismissed', {}),
   missing: [], cycles: [],
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
-  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null, polarDay: {}, polarAutoAt: {}, polarBusy: '', polarHelp: false,
+  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null, polarDay: {}, polarAutoAt: {}, polarBusy: '', polarHelp: false, move: null, lastMove: null, merged: null,
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
   coach: { chat: [], cost: null, reactions: {}, err: null, busy: '', profile: null, memory: null, memTs: 0, memProposal: null, draft: '', ramp: {}, ...LS.get('coach', {}), err: null, busy: '', memProposal: null, ramp: {}, att: [] },
@@ -89,12 +89,19 @@ function rebuild() {
   if (missingReq.length) { S.err = `Kolom(men) ontbreken in de sheet: ${missingReq.join(', ')}`; S.rows = []; S.map = null; return; }
   for (const k of Object.keys(Sh.LAZY_COLS)) if (S.queue.some((o) => (o.tab || S.settings.tab) === S.settings.tab && o.fields && k in o.fields)) Sh.ensureCol(map, [], k);
   S.headerIdx = hi; S.map = map; S.newHeaders = newHeaders;
-  const base = Sh.parseRows(g, hi, map, `${S.settings.tab}§`);
+  const pre = `${S.settings.tab}§`;
+  let base = Sh.parseRows(g, hi, map, pre);
   for (const op of S.queue.filter((o) => (o.tab || S.settings.tab) === S.settings.tab)) {
     if (op.type === 'extra') { g.push(Sh.extraRow(map, op.fields)); continue; }
+    if (op.type === 'move') {                                  // rows change place: later ops use the new keys
+      const pm = Sh.planMove(g, hi, map, op, pre);
+      if (pm.moved) { g.splice(0, g.length, ...pm.grid); base = Sh.parseRows(g, hi, map, pre); }
+      continue;
+    }
     const cells = Sh.planWrites(base, map, op);
     if (cells) { Sh.applyCells(g, cells); S.pendingKeys.add(op.type === 'piece' ? op.key : dayKey(op.week, op.dayIdx)); }
   }
+  S.merged = g;                                              // the grid with all queued ops applied (used to plan moves)
   S.rows = Sh.parseRows(g, hi, map, `${S.settings.tab}§`);
   S.missing = Sh.missingExpected(map);
   S.cycles = [...new Set(S.rows.map((r) => r.cycle.trim()).filter(Boolean))];
@@ -269,11 +276,39 @@ async function syncTab(tab) {
   if (hi < 0) { keep(); if (tab === S.settings.tab) { rebuild(); throw new Error(S.err); } return { stuck: 0, added: [], done: 0 }; }
   const { map, newHeaders } = Sh.buildColumnMap(values[hi]);
   for (const k of Object.keys(Sh.LAZY_COLS)) if (S.queue.some((o) => (o.tab || S.settings.tab) === tab && o.fields && k in o.fields)) Sh.ensureCol(map, newHeaders, k);
-  const rows = Sh.parseRows(values, hi, map, `${tab}§`);
+  const pre = `${tab}§`;
+  let rows = Sh.parseRows(values, hi, map, pre);
   const cells = [], done = [];
   const ops = S.queue.filter((o) => (o.tab || S.settings.tab) === tab);
   for (const h of newHeaders) cells.push({ row: hi + 1, col: h.col, value: h.title });
+  const flush = async () => {
+    if (!cells.length) return;
+    await Api.batchUpdate(S.settings.sheetId, cells.map((c) => ({ range: Sh.a1(tab, c.row, c.col), values: [[c.value]] })));
+    Sh.applyCells(values, cells); cells.length = 0;
+  };
+  let sheetNum = null, droppedMoves = 0;
   for (const op of ops) {
+    if (op.type === 'move') {                                   // strictly in order: writes first, then the row moves
+      await flush();
+      const pm = Sh.planMove(values, hi, map, op, pre);
+      droppedMoves += pm.skipped.length;
+      if (pm.moved) {
+        await Api.batchUpdate(S.settings.sheetId, pm.cells.map((c) => ({ range: Sh.a1(tab, c.row, c.col), values: [[c.value]] })));
+        if (pm.moves.length) {
+          if (sheetNum == null) sheetNum = (await Api.getMeta(S.settings.sheetId)).ids[tab];
+          await Api.moveRows(S.settings.sheetId, sheetNum, pm.moves);
+        }
+        values.splice(0, values.length, ...pm.grid);
+        rows = Sh.parseRows(values, hi, map, pre);
+      }
+      done.push(op); continue;
+    }
+    if (op.type === 'extra') {
+      await flush();
+      const row = Sh.extraRow(map, op.fields);
+      await Api.appendRows(S.settings.sheetId, tab, [row]); values.push(row);
+      done.push(op); continue;
+    }
     const c = Sh.planWrites(rows, map, op);
     if (!c) { op.error = 'Rij niet meer gevonden in de sheet'; continue; }
     if (op.type === 'piece') {
@@ -285,11 +320,8 @@ async function syncTab(tab) {
     }
     delete op.error; cells.push(...c); done.push(op);
   }
-  const data = cells.map((c) => ({ range: Sh.a1(tab, c.row, c.col), values: [[c.value]] }));
-  if (data.length) await Api.batchUpdate(S.settings.sheetId, data);
-  Sh.applyCells(values, cells);
-  const extras = done.filter((o) => o.type === 'extra').map((o) => Sh.extraRow(map, o.fields));
-  if (extras.length) { await Api.appendRows(S.settings.sheetId, tab, extras); values.push(...extras); }
+  await flush();
+  if (droppedMoves) toast(`${droppedMoves} onderdeel(en) niet verplaatst: al gelogd in de sheet`);
   keep();
   S.queue = S.queue.filter((o) => !done.includes(o)); save.queue();
   return { stuck: ops.filter((o) => o.error).length, added: newHeaders, done: done.length };
@@ -387,7 +419,7 @@ function renderSoft() { if (typing()) renderChip(); else render(); }
 
 function render() {
   if (!configured()) { $app.innerHTML = settingsHTML(true); return; }
-  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '') + extraHTML() + askHTML();
+  $app.innerHTML = mainHTML() + (S.showSettings ? settingsHTML(false) : '') + extraHTML() + moveHTML() + askHTML();
   tick();
 }
 
@@ -415,7 +447,7 @@ function mainHTML() {
   if (!S.rows.length) return topHTML() + `<div class="rest"><b>Nog geen planning geladen</b>${S.sync.state === 'login' ? 'Log in om de sheet te laden.' : 'Even geduld…'}</div>`;
   const { week, dayIdx } = S.view;
   if (S.page === 'week') return topHTML() + weekHTML();
-  return topHTML() + noticeHTML() + painBarHTML() + readyBarHTML() + polarCardHTML(week, dayIdx, rowsOf(week, dayIdx)) + sessionBannerHTML() + dayHTML(week, dayIdx);
+  return topHTML() + noticeHTML() + undoBarHTML() + painBarHTML() + readyBarHTML() + polarCardHTML(week, dayIdx, rowsOf(week, dayIdx)) + sessionBannerHTML() + dayHTML(week, dayIdx);
 }
 
 function noticeHTML() {
@@ -498,7 +530,7 @@ function dayHTML(week, dayIdx) {
   return `<div class="dayhead"><h2>${title}${optional ? '<span class="badge">optioneel</span>' : ''}</h2><p>${esc(focus)} · ${done}/${rs.length} gelogd${timeTxt}</p></div>
     ${(rs.find((r) => r.readiness) || {}).readiness ? `<div class="readyline">🔋 ${esc(rs.find((r) => r.readiness).readiness)}</div>` : ''}
     ${polarLineHTML(week, dayIdx, rs)}
-    <div class="daytools"><button class="btn" data-act="gym-open">🏋 Gym-modus</button><button class="btn" data-act="extra-open">＋ Extra sessie of les</button></div>
+    <div class="daytools"><button class="btn" data-act="gym-open">🏋 Gym-modus</button><button class="btn" data-act="extra-open">＋ Extra sessie of les</button><button class="btn" data-act="move-open">↔ Verplaats</button></div>
     ${sessHTML}${rs.map((r) => pieceHTML(r, S.open[r.key] ?? (firstOpen && firstOpen.key === r.key))).join('')}${coachDayHTML(week, dayIdx, rs)}`;
 }
 
@@ -787,30 +819,185 @@ async function polarTest() {
   catch (e) { toast(e.message); }
 }
 
+// ---------- doelkiezer (week + dag), gedeeld door "Verplaats" en de les-vraag ----------
+const dmy = (w, d) => { const x = Sh.dateFor(curStart(), w, d); return x ? `${x.getDate()}/${x.getMonth() + 1}` : ''; };
+const openOf = (w, d) => rowsOf(w, d).filter((r) => Sh.status(r) === 'open');
+const maxWeek = () => Math.max(1, ...weeks());
+function pickerHTML(ctx, st) {
+  const ws = weeks(), top = maxWeek() + 1;
+  const chips = Sh.DAYS.map((dn, d) => {
+    const all = rowsOf(st.tw, d), n = all.filter((r) => Sh.status(r) === 'open').length;
+    const same = st.tw === S.view.week && d === S.view.dayIdx;
+    const sub = same ? 'hier' : !all.length ? 'leeg' : `${n} open`;
+    return `<button type="button" class="tpday ${st.td === d ? 'on' : ''}" data-act="tp-day" data-ctx="${ctx}" data-d="${d}" ${same ? 'disabled' : ''}><b>${dn}</b><small>${dmy(st.tw, d)}</small><small>${sub}</small></button>`;
+  }).join('');
+  return `<div class="tp"><div class="tpweek"><button type="button" class="btn" data-act="tp-week" data-ctx="${ctx}" data-dir="-1" ${st.tw <= 1 ? 'disabled' : ''}>‹</button><b>Week ${st.tw}${st.tw > Math.max(0, ...ws) ? ' (nieuw)' : ''}</b><button type="button" class="btn" data-act="tp-week" data-ctx="${ctx}" data-dir="1" ${st.tw >= top ? 'disabled' : ''}>›</button></div><div class="tpdays">${chips}</div></div>`;
+}
+function tpAction(b) {
+  const st = b.dataset.ctx === 'extra' ? S.extra : S.move; if (!st) return;
+  if (st === S.extra) extraRead();
+  if (b.dataset.act === 'tp-week') { st.tw = Math.min(maxWeek() + 1, Math.max(1, st.tw + +b.dataset.dir)); if (st.tw === S.view.week && st.td === S.view.dayIdx) st.td = -1; }
+  else st.td = +b.dataset.d;
+  if (st === S.move) st.swap = false;
+  render();
+}
+const minsOf = (rs) => rs.reduce((a, r) => a + In.plannedMin(r.piece), 0);
+
+// ---------- verplaatsen ----------
+function moveOpen() {
+  const { week, dayIdx } = S.view;
+  const open = openOf(week, dayIdx);
+  if (!open.length) { toast('Er zijn geen open onderdelen om te verplaatsen op deze dag.'); return; }
+  const nd = dayIdx < 6 ? { tw: week, td: dayIdx + 1 } : { tw: week + 1, td: 0 };
+  S.move = { sel: open.map((r) => r.key), tw: nd.tw, td: nd.td, swap: false };
+  render();
+}
+function moveHTML() {
+  const m = S.move; if (!m) return '';
+  const { week, dayIdx } = S.view;
+  const open = openOf(week, dayIdx);
+  const tgtOpen = m.td >= 0 ? openOf(m.tw, m.td) : [];
+  const picked = open.filter((r) => m.sel.includes(r.key));
+  const swapRows = m.swap ? tgtOpen : [];
+  const srcAfter = minsOf(rowsOf(week, dayIdx)) - minsOf(picked) + minsOf(swapRows);
+  const tgtAfter = m.td >= 0 ? minsOf(rowsOf(m.tw, m.td)) - minsOf(swapRows) + minsOf(picked) : 0;
+  const lbl = (w, d) => `${Sh.DAYS[d]} ${dmy(w, d)}`.trim();
+  const sum = m.td < 0 ? 'Kies een dag.' : !picked.length ? 'Vink minstens één onderdeel aan.'
+    : `${picked.length} onderdeel/onderdelen → ${lbl(m.tw, m.td)}${swapRows.length ? ` · ${swapRows.length} terug naar ${lbl(week, dayIdx)}` : ''}. Geplande tijd: ${lbl(m.tw, m.td)} ${tgtAfter}', ${lbl(week, dayIdx)} ${srcAfter}'.`;
+  return `<div class="sheetmodal"><div><div class="setup"><h1>Verplaats onderdelen</h1>
+    <p class="hint">Van ${Sh.DAYS_LONG[dayIdx]} ${dmy(week, dayIdx)} (week ${week}). Alleen onderdelen die nog niet gelogd zijn.</p>
+    <div class="mvlist">${open.map((r) => `<label class="chk"><input type="checkbox" data-act="mv-toggle" data-key="${esc(r.key)}" ${m.sel.includes(r.key) ? 'checked' : ''}> <span>${esc(r.piece)}</span></label>`).join('')}</div>
+    <button class="btn link" data-act="mv-all">${picked.length === open.length ? 'Niets' : 'Alles'} aanvinken</button>
+    <h3 class="mvh">Naar</h3>${pickerHTML('move', m)}
+    ${tgtOpen.length ? `<label class="toggle"><input type="checkbox" data-act="mv-swap" ${m.swap ? 'checked' : ''}> Wissel: de ${tgtOpen.length} open onderdelen van ${Sh.DAYS[m.td]} komen naar ${Sh.DAYS[dayIdx]}</label>` : ''}
+    <p class="hint mvsum">${esc(sum)}</p>
+    <button class="btn primary" data-act="mv-go" ${m.td < 0 || !picked.length ? 'disabled' : ''}>Verplaats</button><button class="btn" data-act="mv-cancel">Annuleer</button></div></div></div>`;
+}
+// Queue a move op; returns the undo info (or null when nothing moved)
+function queueMove(moves, label) {
+  if (!moves.length || !S.merged) return null;
+  const tab = S.settings.tab, pre = `${tab}§`;
+  const op = { type: 'move', tab, moves, at: Date.now() };
+  const pm = Sh.planMove(S.merged, S.headerIdx, S.map, op, pre);
+  if (!pm.moved) return null;
+  const after = Sh.parseRows(pm.grid, S.headerIdx, S.map, pre);
+  const keyMap = new Map(pm.placed.map((p) => [p.oldKey, after.find((r) => r.rowNum === p.newRowNum)?.key]));
+  const undo = pm.placed.map((p) => {
+    const i = S.rows.findIndex((r) => r.key === p.oldKey);
+    let prev = null; for (let j = i - 1; j >= 0; j--) if (S.rows[j].week === p.from.week && S.rows[j].dayIdx === p.from.dayIdx) { prev = S.rows[j].piece; break; }
+    return { newKey: keyMap.get(p.oldKey), week: p.from.week, dayIdx: p.from.dayIdx, piece: p.from.piece, afterName: prev };
+  });
+  // UI state follows the keys
+  const drafts = {}, opened = {};
+  for (const p of pm.placed) { if (S.drafts[p.oldKey]) { drafts[keyMap.get(p.oldKey)] = S.drafts[p.oldKey]; delete S.drafts[p.oldKey]; } if (p.oldKey in S.open) { opened[keyMap.get(p.oldKey)] = S.open[p.oldKey]; delete S.open[p.oldKey]; } }
+  Object.assign(S.drafts, drafts); Object.assign(S.open, opened); save.drafts?.();
+  S.queue.push(op); save.queue();
+  S.lastMove = { tab, undo, label, at: Date.now() };
+  rebuild();
+  return { moved: pm.moved, renamed: pm.renamed };
+}
+function moveGo() {
+  const m = S.move; if (!m || m.td < 0) return;
+  const { week, dayIdx } = S.view;
+  const picked = openOf(week, dayIdx).filter((r) => m.sel.includes(r.key));
+  if (!picked.length) return;
+  const moves = picked.map((r) => ({ key: r.key, week: m.tw, dayIdx: m.td }));
+  if (m.swap) for (const r of openOf(m.tw, m.td)) moves.push({ key: r.key, week: week, dayIdx });
+  const partKey = S.timers.part && S.timers.part.key;
+  if (partKey && moves.some((x) => x.key === partKey)) { toast('Stop eerst de timer van dit onderdeel.'); return; }
+  const lbl = `${picked.length} onderdeel/onderdelen → ${Sh.DAYS[m.td]} ${dmy(m.tw, m.td)}${m.swap ? ' (gewisseld)' : ''}`;
+  const r = queueMove(moves, lbl);
+  S.move = null;
+  if (!r) { render(); toast('Er is niets verplaatst.'); return; }
+  const target = { week: m.tw, dayIdx: m.td };
+  S.view = target; save.view?.();
+  render(); toast(`Verplaatst ✓${r.renamed.length ? ` (${r.renamed.length} kreeg een nummer achter de naam)` : ''}`); kickSync(true);
+}
+function undoBarHTML() {
+  const u = S.lastMove; if (!u || u.tab !== S.settings.tab) return '';
+  const rows = u.undo.map((x) => S.rows.find((r) => r.key === x.newKey));
+  if (rows.some((r) => !r || Sh.status(r) !== 'open')) return '';
+  return `<div class="notice undo"><span>↩ ${esc(u.label)}</span><button class="link2" data-act="mv-undo">Ongedaan maken</button><button data-act="mv-undo-x" aria-label="Sluiten">✕</button></div>`;
+}
+function moveUndo() {
+  const u = S.lastMove; if (!u) return;
+  const moves = u.undo.map((x) => ({ key: x.newKey, week: x.week, dayIdx: x.dayIdx, piece: x.piece, afterName: x.afterName }));
+  S.lastMove = null;
+  const r = queueMove(moves, '');
+  S.lastMove = null;
+  if (!r) { render(); toast('Ongedaan maken lukt niet meer (onderdelen zijn gelogd of verplaatst).'); return; }
+  S.view = { week: u.undo[0].week, dayIdx: u.undo[0].dayIdx };
+  render(); toast('Verplaatsing ongedaan gemaakt ✓'); kickSync(true);
+}
+function moveAction(a, b) {
+  const m = S.move;
+  if (a === 'mv-toggle') { const k = b.dataset.key; m.sel = b.checked ? [...new Set([...m.sel, k])] : m.sel.filter((x) => x !== k); m.swap = m.swap && m.sel.length > 0; render(); }
+  else if (a === 'mv-all') { const open = openOf(S.view.week, S.view.dayIdx); m.sel = m.sel.length === open.length ? [] : open.map((r) => r.key); render(); }
+  else if (a === 'mv-swap') { m.swap = b.checked; render(); }
+  else if (a === 'mv-cancel') { S.move = null; render(); }
+  else if (a === 'mv-go') moveGo();
+}
+
 // ---------- extra sessie of les ----------
+function extraOpen() {
+  const { week, dayIdx } = S.view;
+  const nd = dayIdx < 6 ? { tw: week, td: dayIdx + 1 } : { tw: week + 1, td: 0 };
+  S.extra = { title: '', actual: '', rpe: '', dur: '', repl: [], rest: 'keep', tw: nd.tw, td: nd.td };
+  render();
+}
+function extraRead() {                                       // keep what was typed when the form re-renders
+  const x = S.extra; if (!x) return;
+  const g = (id) => document.getElementById(id);
+  if (g('x-title')) { x.title = g('x-title').value; x.actual = g('x-actual').value; x.rpe = g('x-rpe').value; x.dur = g('x-dur').value; }
+}
+function extraAction(a, b) {
+  const x = S.extra; if (!x) return;
+  extraRead();
+  if (a === 'x-toggle') x.repl = b.checked ? [...new Set([...x.repl, b.dataset.key])] : x.repl.filter((k) => k !== b.dataset.key);
+  else if (a === 'x-all') { const open = openOf(S.view.week, S.view.dayIdx); x.repl = x.repl.length === open.length ? [] : open.map((r) => r.key); }
+  else if (a === 'x-rest') x.rest = b.dataset.v;
+  render();
+}
 function extraHTML() {
   const x = S.extra; if (!x) return '';
-  const open = rowsOf(S.view.week, S.view.dayIdx).filter((r) => Sh.status(r) === 'open');
+  const open = openOf(S.view.week, S.view.dayIdx);
+  const rest = open.filter((r) => !x.repl.includes(r.key));
+  const restOpts = [['keep', 'Laten staan'], ['skip', 'Overslaan (Skip)'], ['move', 'Doorschuiven…']];
   return `<div class="sheetmodal"><div><div class="setup"><h1>Extra sessie of les</h1>
     <p class="hint">${Sh.DAYS_LONG[S.view.dayIdx]} week ${S.view.week}. Komt als rij met Focus "Extra" in je sheet.</p>
     <label>Titel<input id="x-title" value="${esc(x.title)}" placeholder="bv. CrossFit-les 18u" autocomplete="off"></label>
     <label>Resultaat of notitie<textarea id="x-actual" rows="4" placeholder="bv. WOD Fran 5:10, of: les gegeven, lichte squats">${esc(x.actual)}</textarea></label>
     <div class="row2"><label>RPE<select id="x-rpe"><option value=""></option>${['5', '6', '7', '8', '9', '10'].map((v) => `<option ${x.rpe === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label>Duur (min)<input id="x-dur" type="number" inputmode="numeric" min="0" value="${esc(x.dur)}"></label></div>
-    ${open.length ? `<label>Vervangt dit geplande onderdeel (optioneel)<select id="x-rep"><option value="">Niets</option>${open.map((r) => `<option value="${esc(r.key)}" ${x.replace === r.key ? 'selected' : ''}>${esc(r.piece)}</option>`).join('')}</select><span class="hint">Het onderdeel krijgt "Vervangen door les" en telt niet als gemist.</span></label>` : ''}
+    ${open.length ? `<h3 class="mvh">Welke geplande onderdelen heeft de les vervangen?</h3><p class="hint">Die krijgen "Vervangen door les" en tellen niet als gemist.</p>
+      <div class="mvlist">${open.map((r) => `<label class="chk"><input type="checkbox" data-act="x-toggle" data-key="${esc(r.key)}" ${x.repl.includes(r.key) ? 'checked' : ''}> <span>${esc(r.piece)}</span></label>`).join('')}</div>
+      <button class="btn link" data-act="x-all">${x.repl.length === open.length ? 'Niets' : 'Alles'} aanvinken</button>
+      ${rest.length ? `<h3 class="mvh">Wat met de overige ${rest.length} onderdelen?</h3><div class="chips">${restOpts.map(([v, l]) => `<button type="button" data-act="x-rest" data-v="${v}" class="${x.rest === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+        ${x.rest === 'move' ? pickerHTML('extra', x) : ''}` : ''}` : ''}
     <button class="btn primary" data-act="extra-save">Toevoegen</button><button class="btn" data-act="extra-cancel">Annuleer</button></div></div></div>`;
 }
 function saveExtra() {
-  const g = (id) => document.getElementById(id)?.value ?? '';
-  const title = g('x-title').trim();
+  extraRead();
+  const x = S.extra;
+  const title = (x.title || '').trim();
   if (!title) { toast('Geef de sessie een titel.'); return; }
+  const open = openOf(S.view.week, S.view.dayIdx);
+  const repl = open.filter((r) => x.repl.includes(r.key)), rest = open.filter((r) => !x.repl.includes(r.key));
+  if (rest.length && x.rest === 'move' && x.td < 0) { toast('Kies een dag om naar door te schuiven.'); return; }
   const { week, dayIdx } = S.view, tab = S.settings.tab, stamp = Sh.fmtStamp(Date.now());
   const fields = { cycle: String(Sh.cycleNum(tab) ?? ''), week: String(week), dag: Sh.DAYS[dayIdx], focus: 'Extra', piece: `Les: ${title}`,
-    actual: g('x-actual').trim() || 'Gedaan', rpe: g('x-rpe'), dur: g('x-dur'), loggedAt: stamp };
+    actual: (x.actual || '').trim() || 'Gedaan', rpe: x.rpe, dur: x.dur, loggedAt: stamp };
   S.queue.push({ type: 'extra', tab, week, dayIdx, fields, at: Date.now() });
-  const rep = g('x-rep'), it = rep && currentItem(rep);
-  if (it) S.queue.push({ type: 'piece', tab, key: rep, fields: { actual: 'Vervangen door les', loggedAt: stamp }, base: { actual: it.actual }, at: Date.now() });
-  S.extra = null; save.queue(); rebuild(); render(); toast('Extra sessie toegevoegd ✓'); kickSync(true);
+  for (const it of repl) S.queue.push({ type: 'piece', tab, key: it.key, fields: { actual: 'Vervangen door les', loggedAt: stamp }, base: { actual: it.actual }, at: Date.now() });
+  if (x.rest === 'skip') for (const it of rest) S.queue.push({ type: 'piece', tab, key: it.key, fields: { actual: 'Skip', loggedAt: stamp }, base: { actual: it.actual }, at: Date.now() });
+  const target = { tw: x.tw, td: x.td }, doMove = x.rest === 'move' && rest.length && x.td >= 0, restKeys = rest.map((r) => r.key);
+  S.extra = null; save.queue(); rebuild();
+  let msg = 'Extra sessie toegevoegd ✓';
+  if (doMove) {
+    const r = queueMove(restKeys.map((k) => ({ key: k, week: target.tw, dayIdx: target.td })), `${rest.length} onderdeel/onderdelen → ${Sh.DAYS[target.td]} ${dmy(target.tw, target.td)}`);
+    if (r) msg += ` · ${rest.length} doorgeschoven`;
+  } else if (x.rest === 'skip' && rest.length) msg += ` · ${rest.length} overgeslagen`;
+  render(); toast(msg); kickSync(true);
 }
 
 // ---------- gym-modus ----------
@@ -1401,7 +1588,13 @@ $app.addEventListener('click', (e) => {
   const act = b.dataset.act, key = b.dataset.key;
   switch (act) {
     case 'ready-set': case 'ready-save': case 'ready-skip': readyAction(b.dataset.act, b); break;
-    case 'extra-open': S.extra = { title: '', actual: '', rpe: '', dur: '', replace: '' }; render(); break;
+    case 'extra-open': extraOpen(); break;
+    case 'x-toggle': case 'x-all': case 'x-rest': extraAction(b.dataset.act, b); break;
+    case 'tp-week': case 'tp-day': tpAction(b); break;
+    case 'move-open': moveOpen(); break;
+    case 'mv-toggle': case 'mv-all': case 'mv-swap': case 'mv-cancel': case 'mv-go': moveAction(b.dataset.act, b); break;
+    case 'mv-undo': moveUndo(); break;
+    case 'mv-undo-x': S.lastMove = null; render(); break;
     case 'extra-cancel': S.extra = null; render(); break;
     case 'extra-save': saveExtra(); break;
     case 'gym-open': gymOpen(); break;

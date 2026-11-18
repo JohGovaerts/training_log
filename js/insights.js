@@ -15,7 +15,7 @@ export function baseName(piece) {
 }
 export function plannedMin(piece) {
   const s = String(piece ?? '');
-  let m = MIN_RE.exec(s) || /(\d+)\s*(?:'|’|′|min)\s*$/i.exec(s);
+  let m = MIN_RE.exec(s) || /(\d+)\s*(?:'|’|′|min)\s*(?:\(\d+\)\s*)?$/i.exec(s);
   return m ? parseInt(m[1], 10) : 0;
 }
 
