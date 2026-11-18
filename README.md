@@ -141,6 +141,6 @@ Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer
 - **Readiness-check**: op de dag van vandaag, voor je iets logt, vraagt de app slaap, spierpijn en stress (3 tikken, overslaan kan). Het komt als tekst op elke rij van die dag in een kolom **Readiness**, die de app pas toevoegt als je hem voor het eerst gebruikt. De coach in de app leest het mee.
 - **Extra sessie of les** (knop bovenaan elke dag): titel, resultaat, RPE en duur. De app voegt een rij toe met Focus "Extra" en Piece "Les: titel". Kies je een gepland onderdeel dat het vervangt, dan krijgt dat "Vervangen door les".
 - **Gym-modus** (knop bovenaan elke dag): groot onderdeel met doel, plaatjes per kant, vorige keer en de timerknoppen. Vorige en Volgende bladeren door de sessie, Loggen brengt je naar het invulveld. Het scherm blijft aan.
-- **Coach-bevestiging** toont nu een schatting van de tokens en de kost. Losse vragen gaan standaard naar Haiku (uit te zetten in ⚙ Coach); reacties en weekoverzicht gebruiken je gekozen model.
+- **Coach-bevestiging** toont nu een schatting van de tokens en de kost. Losse vragen zonder beeld gaan standaard naar Haiku (uit te zetten in ⚙ Coach); vragen met foto of video, reacties en weekoverzicht gebruiken je gekozen model.
 - **CSV-back-up**: ⚙ → "Logboek van dit tabblad exporteren (CSV)". Puntkomma-gescheiden, opent goed in Excel.
 - **Eerste keer**: de instellingen tonen nu 3 stappen bovenaan. Een Engelse interface is niet gebouwd.
