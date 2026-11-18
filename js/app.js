@@ -1193,18 +1193,18 @@ function coachFail(e) {
   return info;
 }
 
-async function coachCall(userText, { history = false, maxTokens = 900, withContext = true, images = [], model = S.settings.coachModel } = {}) {
+async function coachCall(userText, { history = false, maxTokens = 900, effort = 'low', withContext = true, images = [], model = S.settings.coachModel } = {}) {
   const blk = coachBlock();
   if (blk.blocked) throw new Co.CoachError({ kind: 'blocked', title: blk.reason, msg: blk.reason });
   const context = withContext && S.view ? Co.contextPack({ tab: S.settings.tab, rows: S.rows, week: S.view.week, dayIdx: S.view.dayIdx }) : '';
   const system = Co.systemPrompt({ lang: coachLang(), profile: S.coach.profile || [], memory: S.coach.memory || [], context });
   const prior = history ? S.coach.chat.slice(-12).map((m) => ({ role: m.role, content: m.content })) : [];
   const messages = Co.withImages(Co.normalizeMessages([...prior, { role: 'user', content: userText }]), images);
-  let r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
+  let r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens, effort });
   S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
   if (!r.text && model !== S.settings.coachModel) {            // the quick model returned nothing: try the chosen model once
     model = S.settings.coachModel;
-    r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens });
+    r = await Co.callClaude({ key: S.settings.coachKey.trim(), model, system, messages, maxTokens, effort });
     S.coach.cost = Co.addCost(S.coach.cost, model, r.usage);
   }
   save.coach();
@@ -1257,7 +1257,7 @@ async function coachReact(week, dayIdx) {
   setBusy(`react:${k}`);
   try {
     const q = Co.shareText({ tab: S.settings.tab, kind: 'day', rows: S.rows, week, dayIdx });
-    const am = assistantMsg(await coachCall(q, { maxTokens: 800 }));
+    const am = assistantMsg(await coachCall(q, { maxTokens: 3000 }));
     S.coach.reactions[k] = { text: am.content, props: am.props ? am.props.length : 0, at: Date.now(), model: S.settings.coachModel };
     S.coach.chat.push({ role: 'user', label: `Reactie op ${Sh.DAYS[dayIdx]} week ${week}`, content: q, at: Date.now() }, am);
     logCoach(Co.logEntry({ soort: 'Sessie-reactie', over: `${Sh.DAYS[dayIdx]} W${week} (${S.settings.tab})`, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
@@ -1281,7 +1281,7 @@ async function coachWeek() {
   setBusy('week');
   try {
     const q = Co.shareText({ tab: S.settings.tab, kind: 'week', rows: S.rows, week, dayIdx: 0 });
-    const am = assistantMsg(await coachCall(q, { maxTokens: 1200 }));
+    const am = assistantMsg(await coachCall(q, { maxTokens: 3500, effort: 'medium' }));
     const text = am.content;
     S.coach.chat.push({ role: 'user', label: `Weekoverzicht week ${week}`, content: q, at: Date.now() }, am);
     logCoach(Co.logEntry({ soort: 'Weekoverzicht', over: `W${week} (${S.settings.tab})`, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
@@ -1304,7 +1304,7 @@ async function coachSend() {
   const keep = S.coach.draft; S.coach.draft = ''; S.coach.att = [];
   setBusy('chat');
   try {
-    const reply = await coachCall(text, { history: true, maxTokens: 1500, images: att, model: quickModel(att.length, text) });
+    const reply = await coachCall(text, { history: true, maxTokens: 3000, images: att, model: quickModel(att.length, text) });
     S.coach.chat.push(assistantMsg(reply)); save.coach();
   } catch (e) {
     S.coach.chat.pop(); S.coach.draft = keep; S.coach.att = att;   // nothing lost: question and attachments are back

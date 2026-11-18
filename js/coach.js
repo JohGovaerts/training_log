@@ -171,14 +171,14 @@ export const BLOCKING = new Set(['credits', 'auth', 'applimit']);
 // ---------- API ----------
 export class CoachError extends Error { constructor(info) { super(info.msg); this.info = info; } }
 
-export async function callClaude({ key, model = 'claude-sonnet-5-5', system, messages, maxTokens = 900, fetchImpl }) {
+export async function callClaude({ key, model = 'claude-sonnet-5-5', system, messages, maxTokens = 900, effort = 'low', fetchImpl }) {
   const f = fetchImpl || ((...a) => fetch(...a));
   let r;
   try {
     r = await f(API_URL, {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system, messages }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, output_config: { effort }, system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system, messages }),
     });
   } catch (e) {
     throw new CoachError(mapError({ offline: true, message: e.message }));
