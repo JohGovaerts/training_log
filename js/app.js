@@ -481,9 +481,16 @@ function pieceHTML(it, open) {
     </div>${open ? formHTML(it) : ''}</article>`;
 }
 
+function loadsHTML(it) {
+  const bar = S.settings.barKg || 20;
+  const ls = Ld.loadsFor(it, { bar });
+  if (!ls.length) return '';
+  return `<div class="calc">🧮 Stang ${bar} kg, per kant:${ls.map((l) => `<br><b>${Ld.fmtKg(l.kg)} kg</b> → ${l.perSide.map(Ld.fmtKg).join(' · ')}${l.exact ? '' : ` <small>(dichtst haalbaar: ${Ld.fmtKg(l.loaded)} kg)</small>`}`).join('')}</div>`;
+}
+
 function calcHTML(it) {
   const cs = Ld.calcsFor(it, S.rows, { bar: S.settings.barKg || 20 });
-  if (!cs.length) return '';
+  if (!cs.length) return loadsHTML(it);
   return cs.map((c) => {
     if (c.missing) return `<div class="calc warn">🧮 ${c.pct}% van wk ${c.week}: ${esc(c.why)}</div>`;
     const load = c.barbell

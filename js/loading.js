@@ -65,7 +65,27 @@ export function plates(total, bar = 20, avail = PLATES) {
   return { perSide, exact: left < 1e-6, loaded: bar + 2 * sum, belowBar: total < bar };
 }
 
-export const isBarbell = (piece) => /(squat|deadlift|press|clean|snatch|jerk|bench|rdl|thruster)/i.test(piece) && !/sled|sandbag|zak/i.test(piece);
+export const isBarbell = (piece) => /(squat|deadlift|press|clean|snatch|jerk|bench|rdl|thruster)/i.test(piece) && !/sled|sandbag|zak|bulgarian|split|goblet|lunge|pallof|kettlebell|\bkb\b|dumbbell|\bdb\b|pull-?up|dip/i.test(piece);
+
+// Loads that are already written down: "@ 95 kg", "(120-125 kg)", "richt 135-142,5 kg", ramps "60×5, 80×3, 100×2".
+// Skipped: bases like "van 160 kg", "+20 kg" (extra weight).
+export function findLoads(text) {
+  const t = String(text ?? '');
+  const out = new Set();
+  const add = (v) => { if (v >= 20 && v <= 400) out.add(v); };
+  for (const m of t.matchAll(/(?<![\d.,])(\d{2,3}(?:[.,]\d+)?)(?:\s*[-\u2013]\s*(\d{2,3}(?:[.,]\d+)?))?\s*kg/gi)) {
+    const before = t.slice(Math.max(0, m.index - 8), m.index);
+    if (/(van|\+|\u00b1)\s*$/i.test(before)) continue;
+    add(num(m[1])); if (m[2]) add(num(m[2]));
+  }
+  for (const m of t.matchAll(/(?<![\d.,])(\d{2,3}(?:[.,]\d+)?)\s*[\u00d7x]\s*\d{1,2}(?![\d'])/g)) add(num(m[1]));
+  return [...out].sort((a, b) => a - b).slice(0, 10);
+}
+
+export function loadsFor(it, { bar = 20 } = {}) {
+  if (!isBarbell(it.piece)) return [];
+  return findLoads(it.prescribed).filter((kg) => kg > bar).map((kg) => ({ kg, ...plates(kg, bar) }));
+}
 
 export function calcsFor(it, rows, { bar = 20, step = 1 } = {}) {
   const found = findPercents(`${it.prescribed} ${it.intent}`);
