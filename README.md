@@ -113,3 +113,16 @@ Elke coach-reactie, elk weekoverzicht en elke toegepaste of teruggedraaide planw
 
 ### Bevestiging bij elke coach-aanvraag
 Elke aanvraag aan de coach (reactie op de training, weekoverzicht, vraag) toont eerst een korte uitleg met aantal aanvragen en model. Pas na **Verstuur** gaat er iets naar de API; **Annuleer** verstuurt niets. Ook de automatische reactie na een afgeronde sessie vraagt eerst bevestiging.
+
+
+## Interval-timer (EMOM, AMRAP, For Time, werk/rust, rust na een set)
+Elk onderdeel heeft een knop **⏲** (bv. "⏲ EMOM 10'"). De app leest de timer uit *Prescribed* (formaat: zie de projectinstructies, "Timer notation"); lukt dat niet, dan stel je hem met een paar velden zelf in.
+- Je start altijd zelf. Daarna loopt eerst 10 seconden af, met pieptonen in de laatste 3.
+- Signaal 10 seconden voor het einde van elk interval en een ander signaal bij het begin van het volgende. Bij For Time klinkt een signaal bij het target en een eindsignaal bij de time cap.
+- Fasebalk groen (werk) / rood (rust); bij een EMOM staat de beweging van het huidige interval op het scherm. Portrait en landscape.
+- AMRAP: **+1 ronde** (en −1). Na afloop kun je rondes en extra reps nog aanpassen. For Time: **Klaar** geeft de eindtijd, ook aanpasbaar.
+- Stop of einde: **Bewaar in Actual** zet het resultaat in je logveld (jij tikt daarna zelf op Opslaan).
+- Onderdelen met "rust 2'30": tik **✓ Set klaar** en de rust start automatisch (teller 2/5).
+- In ⚙ Interval-timer: geluid, volume, schermflits. Het scherm blijft aan (Wake Lock) zolang de timer loopt. Een lopende timer overleeft een herstart van de app; geluid moet je dan opnieuw aanzetten met één tik.
+- **Losse timer:** tik op ⏲ bovenaan (naast ↻). Je stelt type en duur in, zonder onderdeel en zonder iets in je log te schrijven. Handig om te testen of voor je klassen.
+- Op iOS kan geluid stoppen als het toestel vergrendelt of de app naar de achtergrond gaat; test dit eenmalig met een timer van 10 minuten.
