@@ -95,3 +95,26 @@ export async function batchUpdate(id, data) {
     body: JSON.stringify({ valueInputOption: 'RAW', data }),
   });
 }
+
+// ---- coach tabs (profile / memory): create when missing, replace contents ----
+export async function addTab(id, title) {
+  await call(`${SHEETS}/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title } } }] }) });
+}
+
+// Replace the whole tab with `values` (rows of strings): clear first, then write from A1.
+export async function replaceValues(id, tab, values) {
+  await call(`${SHEETS}/${id}/values/${encodeURIComponent(quote(tab))}:clear`, { method: 'POST', body: '{}' });
+  if (!values.length) return;
+  await call(`${SHEETS}/${id}/values:batchUpdate`, {
+    method: 'POST',
+    body: JSON.stringify({ valueInputOption: 'RAW', data: [{ range: `${quote(tab)}!A1`, majorDimension: 'ROWS', values }] }),
+  });
+}
+
+export async function appendRows(id, tab, rows) {
+  if (!rows.length) return;
+  await call(`${SHEETS}/${id}/values/${encodeURIComponent(`${quote(tab)}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    body: JSON.stringify({ majorDimension: 'ROWS', values: rows }),
+  });
+}

@@ -2,6 +2,7 @@ import * as Sh from './sheet.js';
 import * as Api from './api.js';
 import * as Rec from './records.js';
 import * as Ld from './loading.js';
+import * as Co from './coach.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -13,7 +14,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -27,7 +28,9 @@ const S = {
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
+  coach: { chat: [], cost: null, reactions: {}, err: null, busy: '', profile: null, memory: null, memTs: 0, memProposal: null, draft: '', ramp: {}, ...LS.get('coach', {}), err: null, busy: '', memProposal: null, ramp: {}, att: [] },
 };
+S.coach.logQ = LS.get('coach', {}).logQ || [];
 // A client-ID in config.js always wins over a value saved earlier in this browser.
 if (window.LOGAPP_CONFIG?.clientId?.trim()) S.settings.clientId = window.LOGAPP_CONFIG.clientId.trim();
 
@@ -58,6 +61,7 @@ const save = {
   dayBad: () => LS.set('dayBad', S.dayBad),
   dismissed: () => LS.set('dismissed', S.dismissed),
   view: () => LS.set('view', S.view),
+  coach: () => LS.set('coach', { logQ: S.coach.logQ, chat: S.coach.chat.slice(-40), cost: S.coach.cost, reactions: S.coach.reactions, profile: S.coach.profile, memory: S.coach.memory, memTs: S.coach.memTs }),
 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -162,6 +166,7 @@ function commitPiece(key, extra = {}) {
   rebuild(); render();
   toast('Opgeslagen ✓');
   kickSync(true);
+  maybeAutoReact(it.week, it.dayIdx);
   if (timed && S.settings.timers && S.settings.autoNext) {
     const rs = rowsOf(it.week, it.dayIdx);
     const next = rs.slice(rs.findIndex((r) => r.key === key) + 1).find((r) => Sh.status(r) === 'open');
@@ -378,6 +383,7 @@ function render() {
 
 function mainHTML() {
   if (S.page === 'records') return topHTML() + recordsHTML();
+  if (S.page === 'coach') return topHTML() + coachHTML();
   if (S.err) return topHTML() + `<div class="setup"><div class="err">${esc(S.err)}</div><button class="btn" data-act="settings">Instellingen</button></div>`;
   if (!S.rows.length) return topHTML() + `<div class="rest"><b>Nog geen planning geladen</b>${S.sync.state === 'login' ? 'Log in om de sheet te laden.' : 'Even geduld…'}</div>`;
   const { week, dayIdx } = S.view;
@@ -413,12 +419,12 @@ function topHTML() {
   const titleEl = ct.length > 1 || (ct.length === 1 && S.tabs.length > 1 && !ct.includes(S.settings.tab))
     ? `<select class="tabsel" id="tabsel" aria-label="Cyclus">${[...new Set([...ct, S.settings.tab])].map((t) => `<option ${t === S.settings.tab ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`
     : `<h1>${esc(S.settings.sheetTitle || 'Training Log')}</h1>`;
-  const train = S.page !== 'records';
+  const train = S.page === 'train';
   return `<header class="top">
     <div class="bar">${titleEl}<span id="chip">${syncChip()}</span>
       <button class="iconbtn" data-act="refresh" aria-label="Verversen">↻</button>
       <button class="iconbtn" data-act="settings" aria-label="Instellingen">⚙</button></div>
-    <div class="seg"><button class="${train ? 'on' : ''}" data-act="page" data-p="train">Training</button><button class="${train ? '' : 'on'}" data-act="page" data-p="records">Records</button></div>
+    <div class="seg"><button class="${train ? 'on' : ''}" data-act="page" data-p="train">Training</button><button class="${S.page === 'records' ? 'on' : ''}" data-act="page" data-p="records">Records</button><button class="${S.page === 'coach' ? 'on' : ''}" data-act="page" data-p="coach">Coach</button></div>
     ${train && S.view ? `<div class="weeknav"><button class="iconbtn" data-act="week" data-d="-1" ${week <= ws[0] ? 'disabled' : ''} aria-label="Vorige week">‹</button>
       <div><b>${S.cycles.length === 1 ? `Cycle ${esc(S.cycles[0])} · ` : ''}Week ${week}</b><small>${range}</small></div>
       <button class="iconbtn" data-act="week" data-d="1" ${week >= ws[ws.length - 1] ? 'disabled' : ''} aria-label="Volgende week">›</button></div>
@@ -459,7 +465,7 @@ function dayHTML(week, dayIdx) {
   }
   const firstOpen = rs.find((r) => Sh.status(r) === 'open');
   return `<div class="dayhead"><h2>${title}${optional ? '<span class="badge">optioneel</span>' : ''}</h2><p>${esc(focus)} · ${done}/${rs.length} gelogd</p></div>
-    ${sessHTML}${rs.map((r) => pieceHTML(r, S.open[r.key] ?? (firstOpen && firstOpen.key === r.key))).join('')}`;
+    ${sessHTML}${rs.map((r) => pieceHTML(r, S.open[r.key] ?? (firstOpen && firstOpen.key === r.key))).join('')}${coachDayHTML(week, dayIdx, rs)}`;
 }
 
 function pieceHTML(it, open) {
@@ -475,6 +481,7 @@ function pieceHTML(it, open) {
     <div class="pbody"><div class="rx">${esc(it.prescribed)}</div>
       ${it.intent ? `<div class="intent">${esc(it.intent)}</div>` : ''}
       ${calcHTML(it)}
+      ${pieceActionsHTML(it)}
       ${lastHTML(it)}
       ${showDemo ? `<a class="demo" href="${esc(it.demo.trim())}" target="_blank" rel="noopener">▶ Demo</a>` : ''}
       ${st !== 'open' && !open ? `<div class="result">${esc(summary || '—')}<small>${it.loggedAt ? `gelogd ${esc(it.loggedAt)}` : ''}${it.start ? ` · ${esc(it.start)}–${esc(it.end)}${it.dur ? ` (${esc(it.dur)} min)` : ''}` : ''}</small></div>` : ''}
@@ -629,12 +636,20 @@ function settingsHTML(first) {
     <label>Google client-ID<input id="f-client" value="${esc(s.clientId)}" placeholder="123…apps.googleusercontent.com" autocomplete="off" autocapitalize="off"></label>
     <label>Link naar je Google Sheet<input id="f-sheet" value="${esc(s.sheetId ? `https://docs.google.com/spreadsheets/d/${s.sheetId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"></label>
     <button class="btn primary" data-act="connect">${connected ? 'Opnieuw verbinden' : 'Verbinden met Google'}</button>
-    ${connected ? `<label>Tabblad (cyclus)<select id="f-tab">${(S.tabs.length ? S.tabs : [s.tab]).map((t) => `<option ${t === (S.formTab || s.tab) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+    ${connected ? `<label>Tabblad (cyclus)<select id="f-tab">${(S.tabs.length ? S.tabs.filter((t) => t === s.tab || !Object.values(Co.COACH_TABS).includes(t)) : [s.tab]).map((t) => `<option ${t === (S.formTab || s.tab) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
     <label>Maandag van week 1 (voor dit tabblad)<input type="date" id="f-start" value="${esc((s.cycleStarts || {})[S.formTab || s.tab] || '')}"><span class="hint">Zo weet de app welke dag het vandaag is en toont hij datums. Elke cyclus heeft zijn eigen startdatum.</span></label>
     <label>Link naar je PR Ledger (optioneel)<input id="f-ledger" value="${esc(s.ledgerId ? `https://docs.google.com/spreadsheets/d/${s.ledgerId}` : '')}" placeholder="https://docs.google.com/spreadsheets/d/…" autocomplete="off" autocapitalize="off"><span class="hint">Voor de Records-pagina en de laatste score per onderdeel. Alleen lezen.</span></label>
     <label>Stang<select id="f-bar"><option value="20" ${+s.barKg !== 15 ? 'selected' : ''}>20 kg (man)</option><option value="15" ${+s.barKg === 15 ? 'selected' : ''}>15 kg (vrouw)</option></select><span class="hint">Voor de berekening van de plaatjes per kant.</span></label>
     <label class="toggle"><input type="checkbox" id="f-timers" ${s.timers ? 'checked' : ''}> Timers (sessie en per onderdeel)</label>
     <label class="toggle"><input type="checkbox" id="f-autonext" ${s.autoNext ? 'checked' : ''}> Volgende timer automatisch starten na opslaan</label>
+    <details ${s.coachKey ? 'open' : ''}><summary>Coach (optioneel)</summary><div class="coachset">
+      <label>Anthropic API-sleutel<input id="f-ckey" type="password" value="${esc(s.coachKey)}" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off"><span class="hint">Blijft alleen op dit toestel (en gaat enkel naar Anthropic). Zonder sleutel werkt de app volledig, behalve de coach.</span></label>
+      <label>Model<select id="f-cmodel">${Object.entries(Co.MODELS).map(([id, m]) => `<option value="${id}" ${s.coachModel === id ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label>
+      <label>Taal van de coach<select id="f-clang"><option value="nl" ${s.coachLang !== 'en' ? 'selected' : ''}>Nederlands</option><option value="en" ${s.coachLang === 'en' ? 'selected' : ''}>English</option></select></label>
+      <label>Eigen maandlimiet (USD, 0 = geen)<input id="f-climit" type="number" min="0" step="1" value="${esc(s.coachLimit)}" inputmode="decimal"><span class="hint">De app waarschuwt bij 80% en pauzeert de coach bij 100%. Stel in de Anthropic Console ook een harde limiet in.</span></label>
+      <label>Link naar je coach-project (optioneel)<input id="f-curl" value="${esc(s.coachUrl)}" placeholder="https://claude.ai/project/…" autocomplete="off" autocapitalize="off"></label>
+      <label class="toggle"><input type="checkbox" id="f-cauto" ${s.coachAuto ? 'checked' : ''}> Automatisch coach-reactie na een afgeronde sessie</label>
+      <label class="toggle"><input type="checkbox" id="f-clog" ${s.coachLog ? 'checked' : ''}> Reacties en wijzigingen bewaren in tab "Coach log" (je project kan ze lezen)</label></div></details>
     <button class="btn primary" data-act="settings-save">Opslaan</button>` : ''}
     ${!first ? '<button class="btn" data-act="settings-close">Terug</button><button class="btn link" data-act="logout">Uitloggen</button>' : ''}
   </div>`;
@@ -650,6 +665,327 @@ function tick() {
 }
 setInterval(tick, 1000);
 
+// ---------- coach ----------
+const coachOn = () => !!String(S.settings.coachKey || '').trim();
+const coachLang = () => (S.settings.coachLang === 'en' ? 'en' : 'nl');
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+function coachBlock() {
+  if (!coachOn()) return { blocked: true, reason: 'Voeg je API-sleutel toe in ⚙ om de coach te gebruiken.' };
+  if (!navigator.onLine) return { blocked: true, reason: 'Offline: de coach heeft internet nodig.' };
+  const e = S.coach.err;
+  if (e && Co.BLOCKING.has(e.kind)) return { blocked: true, reason: e.title };
+  const ls = Co.limitState(S.coach.cost, +S.settings.coachLimit);
+  if (ls.state === 'over') return { blocked: true, reason: 'Je eigen maandlimiet is bereikt (verhoog hem in ⚙).' };
+  return { blocked: false };
+}
+
+function coachFail(e) {
+  const info = e instanceof Co.CoachError ? e.info : Co.mapError({ message: e?.message });
+  S.coach.err = { ...info, at: Date.now() };
+  return info;
+}
+
+async function coachCall(userText, { history = false, maxTokens = 900, withContext = true, images = [] } = {}) {
+  const blk = coachBlock();
+  if (blk.blocked) throw new Co.CoachError({ kind: 'blocked', title: blk.reason, msg: blk.reason });
+  const context = withContext && S.view ? Co.contextPack({ tab: S.settings.tab, rows: S.rows, week: S.view.week, dayIdx: S.view.dayIdx }) : '';
+  const system = Co.systemPrompt({ lang: coachLang(), profile: S.coach.profile || [], memory: S.coach.memory || [], context });
+  const prior = history ? S.coach.chat.slice(-12).map((m) => ({ role: m.role, content: m.content })) : [];
+  const messages = Co.withImages(Co.normalizeMessages([...prior, { role: 'user', content: userText }]), images);
+  const r = await Co.callClaude({ key: S.settings.coachKey.trim(), model: S.settings.coachModel, system, messages, maxTokens });
+  S.coach.cost = Co.addCost(S.coach.cost, S.settings.coachModel, r.usage);
+  S.coach.err = null; save.coach();
+  return r.text;
+}
+
+function setBusy(v) {
+  S.coach.busy = v;
+  const focused = document.activeElement?.id === 'cdraft';
+  render();
+  if (focused) { const t = document.getElementById('cdraft'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
+}
+
+// Coach log: rows wait in a local queue until they are written to the tab "Coach log" in your workbook.
+function logCoach(entry) {
+  if (!S.settings.coachLog) return;
+  S.coach.logQ.push(entry); save.coach(); flushCoachLog();
+}
+async function flushCoachLog() {
+  if (S.coach.logBusy || !S.coach.logQ.length || !configured() || !navigator.onLine || !Api.tokenValid()) return;
+  S.coach.logBusy = true;
+  const batch = S.coach.logQ.slice();
+  try {
+    if (!S.tabs.length || !hasTab(Co.COACH_TABS.log)) {
+      S.tabs = (await Api.getMeta(S.settings.sheetId)).tabs;
+      if (!hasTab(Co.COACH_TABS.log)) { await Api.addTab(S.settings.sheetId, Co.COACH_TABS.log); S.tabs = [...S.tabs, Co.COACH_TABS.log]; await Api.appendRows(S.settings.sheetId, Co.COACH_TABS.log, [Co.LOG_HEADER]); }
+    }
+    await Api.appendRows(S.settings.sheetId, Co.COACH_TABS.log, batch);
+    S.coach.logQ = S.coach.logQ.slice(batch.length); save.coach();
+  } catch { /* stays in the queue, retried at the next opportunity */ }
+  S.coach.logBusy = false;
+}
+
+// An assistant answer may carry <voorstel> blocks: strip them and turn them into validated proposals.
+function assistantMsg(raw) {
+  const { text, proposals } = Co.parseProposals(raw);
+  const props = proposals.map((p) => Co.resolveProposal(p, S.rows));
+  return { role: 'assistant', content: text || (props.length ? 'Voorstel:' : raw), props: props.length ? props : undefined, at: Date.now() };
+}
+
+async function coachReact(week, dayIdx) {
+  const k = dayKey(week, dayIdx);
+  if (S.coach.busy) return;
+  setBusy(`react:${k}`);
+  try {
+    const q = Co.shareText({ tab: S.settings.tab, kind: 'day', rows: S.rows, week, dayIdx });
+    const am = assistantMsg(await coachCall(q, { maxTokens: 800 }));
+    S.coach.reactions[k] = { text: am.content, props: am.props ? am.props.length : 0, at: Date.now(), model: S.settings.coachModel };
+    S.coach.chat.push({ role: 'user', label: `Reactie op ${Sh.DAYS[dayIdx]} week ${week}`, content: q, at: Date.now() }, am);
+    logCoach(Co.logEntry({ soort: 'Sessie-reactie', over: `${Sh.DAYS[dayIdx]} W${week} (${S.settings.tab})`, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
+    save.coach();
+  } catch (e) { if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e); }
+  setBusy('');
+}
+
+function maybeAutoReact(week, dayIdx) {
+  if (!S.settings.coachAuto || !coachOn()) return;
+  if (S.coach.reactions[dayKey(week, dayIdx)] || S.coach.busy || coachBlock().blocked) return;
+  if (Co.sessionDone(S.rows, week, dayIdx)) coachReact(week, dayIdx);
+}
+
+async function coachWeek() {
+  if (S.coach.busy || !S.view) return;
+  const { week } = S.view;
+  setBusy('week');
+  try {
+    const q = Co.shareText({ tab: S.settings.tab, kind: 'week', rows: S.rows, week, dayIdx: 0 });
+    const am = assistantMsg(await coachCall(q, { maxTokens: 1200 }));
+    const text = am.content;
+    S.coach.chat.push({ role: 'user', label: `Weekoverzicht week ${week}`, content: q, at: Date.now() }, am);
+    logCoach(Co.logEntry({ soort: 'Weekoverzicht', over: `W${week} (${S.settings.tab})`, antwoord: am.content, props: am.props || [], model: S.settings.coachModel }));
+    save.coach();
+    try {
+      const mem = await coachCall(Co.memoryPrompt({ memory: S.coach.memory || [], reply: text, lang: coachLang() }), { maxTokens: 900, withContext: false });
+      const parsed = Co.parseMemory(mem);
+      if (parsed) { const diff = Co.memoryDiff(S.coach.memory || [], parsed); if (diff.some((d) => d.status !== 'gelijk')) S.coach.memProposal = diff; }
+    } catch (e) { /* memory proposal is a bonus; the overview itself succeeded */ }
+  } catch (e) { if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e); }
+  setBusy('');
+}
+
+async function coachSend() {
+  const att = S.coach.att;
+  const text = (S.coach.draft || '').trim() || (att.length ? 'Wat zie je? Geef één fout en één cue.' : '');
+  if (!text || S.coach.busy) return;
+  const note = att.length ? Co.imageNote(att) : '';
+  S.coach.chat.push({ role: 'user', content: note ? `${note}\n${text}` : text, label: '', shown: text, nImg: att.length, at: Date.now() });
+  const keep = S.coach.draft; S.coach.draft = ''; S.coach.att = [];
+  setBusy('chat');
+  try {
+    const reply = await coachCall(text, { history: true, maxTokens: 900, images: att });
+    S.coach.chat.push(assistantMsg(reply)); save.coach();
+  } catch (e) {
+    S.coach.chat.pop(); S.coach.draft = keep; S.coach.att = att;   // nothing lost: question and attachments are back
+    if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e);
+  }
+  setBusy('');
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok;
+  } catch { return false; }
+}
+async function shareWithCoach(kind) {
+  if (!S.view) return;
+  const text = Co.shareText({ tab: S.settings.tab, kind, rows: S.rows, week: S.view.week, dayIdx: S.view.dayIdx });
+  const copied = await copyText(text);
+  if (navigator.share && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) { try { await navigator.share({ text }); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+  toast(copied ? `Gekopieerd ✓${S.settings.coachUrl ? ' — plak het in je coach-project' : ''}` : 'Kopiëren lukte niet; selecteer de tekst handmatig.');
+  if (S.settings.coachUrl && copied) window.open(S.settings.coachUrl, '_blank', 'noopener');
+}
+
+// coach tabs in the user's own workbook
+const hasTab = (t) => S.tabs.includes(t);
+async function ensureTab(t) { if (!hasTab(t)) { await Api.addTab(S.settings.sheetId, t); S.tabs = [...S.tabs, t]; } }
+async function coachLoad(force = false) {
+  if (!coachOn() && !force) return;
+  if (!configured() || !navigator.onLine || !Api.tokenValid()) return;
+  if (!force && Date.now() - S.coach.memTs < 3600e3 && S.coach.profile && S.coach.memory) return;
+  try {
+    if (!S.tabs.length) S.tabs = (await Api.getMeta(S.settings.sheetId)).tabs;
+    const p = hasTab(Co.COACH_TABS.profile) ? await Api.getValues(S.settings.sheetId, Co.COACH_TABS.profile) : [];
+    const m = hasTab(Co.COACH_TABS.memory) ? await Api.getValues(S.settings.sheetId, Co.COACH_TABS.memory) : [];
+    S.coach.profile = Co.parseTable(p, ['veld', 'inhoud']);
+    S.coach.memory = Co.parseTable(m, ['sectie', 'inhoud', 'bijgewerkt']);
+    S.coach.memTs = Date.now(); save.coach(); if (S.page === 'coach') renderSoft();
+    flushCoachLog();
+  } catch { /* offline or no access: keep the cached copy */ }
+}
+async function writeCoachTab(tab, header, rows) {
+  if (!Api.tokenValid()) { toast('Log eerst opnieuw in (↻) om te kunnen bewaren.'); return false; }
+  try { await ensureTab(tab); await Api.replaceValues(S.settings.sheetId, tab, [header, ...rows]); return true; }
+  catch (e) { toast(`Bewaren mislukt: ${e.message}`); return false; }
+}
+async function saveMemory(list) {
+  const rows = list.map((m) => ({ sectie: m.sectie, inhoud: m.inhoud, bijgewerkt: m.status === 'gelijk' && m.bijgewerkt ? m.bijgewerkt : today() }));
+  if (await writeCoachTab(Co.COACH_TABS.memory, ['Sectie', 'Inhoud', 'Bijgewerkt'], rows.map((r) => [r.sectie, r.inhoud, r.bijgewerkt]))) {
+    S.coach.memory = rows; S.coach.memProposal = null; S.coach.memTs = Date.now(); save.coach(); toast('Coachgeheugen bijgewerkt ✓'); render();
+  }
+}
+async function saveProfile() {
+  const rows = Co.PROFILE_FIELDS.map(([v], i) => ({ veld: v, inhoud: (document.getElementById(`cp-${i}`)?.value || '').trim() }));
+  if (await writeCoachTab(Co.COACH_TABS.profile, ['Veld', 'Inhoud'], rows.map((r) => [r.veld, r.inhoud]))) {
+    S.coach.profile = rows.filter((r) => r.inhoud); S.coach.memTs = Date.now(); save.coach(); toast('Profiel bewaard ✓'); render();
+  }
+}
+
+// ---- Fase 3: photos and video frames (everything stays on the device until you send) ----
+const loadImg = (url) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Kon de foto niet lezen.')); i.src = url; });
+function toJpeg(src, w, h, maxSide) {
+  const k = Math.min(1, maxSide / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  const url = c.toDataURL('image/jpeg', 0.8);
+  return { data: url.split(',')[1], thumb: url };
+}
+async function framesFromVideo(file, n) {
+  const url = URL.createObjectURL(file);
+  try {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error('Deze video kan de browser niet lezen. Probeer een foto of een kortere clip.')); });
+    let dur = v.duration;
+    if (!isFinite(dur)) {                                   // some recorders omit the duration
+      await new Promise((res) => { v.onseeked = res; v.currentTime = 1e7; });
+      dur = v.currentTime;
+    }
+    const out = [];
+    for (const t of Co.frameTimes(dur, n)) {
+      await new Promise((res) => { v.onseeked = res; v.currentTime = Math.min(t, Math.max(0, dur - 0.05)); });
+      out.push({ kind: 'frame', t, ...toJpeg(v, v.videoWidth, v.videoHeight, 768) });
+    }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+async function addFiles(files) {
+  S.coach.busy = 'media'; render();
+  try {
+    for (const f of files) {
+      if (S.coach.att.length >= Co.MAX_IMAGES) { toast(`Maximaal ${Co.MAX_IMAGES} beelden per vraag.`); break; }
+      if (/^video\//.test(f.type)) {
+        const room = Co.MAX_IMAGES - S.coach.att.length;
+        S.coach.att.push(...(await framesFromVideo(f, Math.min(8, room))));
+      } else if (/^image\//.test(f.type)) {
+        const url = URL.createObjectURL(f);
+        try { const im = await loadImg(url); S.coach.att.push({ kind: 'photo', ...toJpeg(im, im.naturalWidth, im.naturalHeight, 1024) }); } finally { URL.revokeObjectURL(url); }
+      }
+    }
+  } catch (e) { toast(e.message || 'Bijlage mislukt'); }
+  S.coach.busy = ''; render();
+}
+
+// ---- Fase 4: apply / reject / undo a proposed change of Prescribed ----
+async function writePrescribed(p, from, to) {
+  if (!Api.tokenValid() || !navigator.onLine) throw new Error('Online en ingelogd nodig om de sheet aan te passen (tik op ↻).');
+  const tab = S.settings.tab, id = S.settings.sheetId;
+  const values = await Api.getValues(id, tab);
+  const hi = Sh.findHeader(values); if (hi < 0) throw new Error('Kopregel niet gevonden.');
+  const { map } = Sh.buildColumnMap(values[hi]);
+  if (!('prescribed' in map)) throw new Error('Kolom Prescribed ontbreekt in de sheet.');
+  const row = Sh.parseRows(values, hi, map, `${tab}§`).find((r) => r.rowNum === p.rowNum);
+  if (!row || row.piece !== p.piece) throw new Error('De planning is intussen gewijzigd; vraag de coach om een nieuw voorstel.');
+  if (row.prescribed.trim() !== from.trim()) throw new Error('Het plan is intussen aangepast; er is niets overschreven.');
+  if (row.actual || row.loggedAt || S.queue.some((o) => o.type === 'piece' && o.key === row.key)) throw new Error('Dit onderdeel is al gelogd; het plan wordt niet meer aangepast.');
+  const cell = { row: row.rowNum, col: map.prescribed, value: to };
+  await Api.batchUpdate(id, [{ range: Sh.a1(tab, cell.row, cell.col), values: [[to]] }]);
+  Sh.applyCells(values, [cell]);
+  S.grids[tab] = { values, ts: Date.now(), sheetId: id, tab }; S.grid = S.grids[tab]; save.grid();
+  rebuild();
+}
+async function proposalAct(mi, pi, act) {
+  const p = S.coach.chat[mi]?.props?.[pi]; if (!p) return;
+  if (act === 'reject') { if (p.status === 'nieuw') p.status = 'geweigerd'; save.coach(); render(); return; }
+  try {
+    if (act === 'apply' && p.status === 'nieuw') { await writePrescribed(p, p.old, p.new); p.status = 'toegepast'; toast('Plan aangepast ✓'); logCoach(Co.logEntry({ soort: 'Plan aangepast', over: `W${p.week} ${p.dag} ${p.piece}`, props: [p], model: S.settings.coachModel })); }
+    else if (act === 'undo' && p.status === 'toegepast') { await writePrescribed(p, p.new, p.old); p.status = 'hersteld'; toast('Teruggezet ✓'); logCoach(Co.logEntry({ soort: 'Plan hersteld', over: `W${p.week} ${p.dag} ${p.piece}`, props: [p], model: S.settings.coachModel })); }
+  } catch (e) { toast(e.message || 'Aanpassen mislukt'); }
+  save.coach(); render();
+}
+const propHTML = (mi, pi, p) => {
+  const lab = { nieuw: '', toegepast: '✓ toegepast', geweigerd: 'geweigerd', hersteld: 'teruggezet', ongeldig: '⚠ niet toepasbaar' }[p.status];
+  const acts = p.status === 'nieuw' ? `<div class="actions"><button class="btn primary" data-act="prop-apply" data-m="${mi}" data-p="${pi}">Toepassen</button><button class="btn" data-act="prop-reject" data-m="${mi}" data-p="${pi}">Weigeren</button></div>`
+    : p.status === 'toegepast' ? `<button class="btn link" data-act="prop-undo" data-m="${mi}" data-p="${pi}">Ongedaan maken</button>` : '';
+  return `<div class="coachcard prop"><b>Voorstel: ${esc(Sh.DAYS[Sh.dayIndex(p.dag)] || p.dag)} week ${esc(p.week)} · ${esc(p.piece)}</b> ${lab ? `<small>${lab}</small>` : ''}
+    ${p.old != null ? `<p><small>nu</small> ${esc(p.old)}</p>` : ''}<p><small>nieuw</small> <b>${esc(p.new)}</b></p>${p.reason ? `<p><small>${esc(p.reason)}</small></p>` : ''}${p.why ? `<p class="errline">${esc(p.why)}</p>` : ''}${acts}</div>`;
+};
+
+function rampHTML(it) {
+  if (!S.coach.ramp[it.key]) return '';
+  const bar = S.settings.barKg || 20;
+  const target = Co.rampTarget(it, S.rows, { bar });
+  if (!target) return '';
+  const steps = Co.buildRamp(target, { bar });
+  return `<div class="calc"><b>Opbouw naar ${Ld.fmtKg(target)} kg</b> <small>(stang ${bar} kg, per kant)</small>${steps.map((s) => `<br>${s.reps ? `${s.reps}×` : 'top'} <b>${Ld.fmtKg(s.kg)} kg</b> <small>${s.label === 'top' ? '' : s.label || `${s.pct}%`} → ${s.perSide.length ? s.perSide.map(Ld.fmtKg).join(' · ') : 'alleen stang'}</small>`).join('')}</div>`;
+}
+
+function pieceActionsHTML(it) {
+  const k = esc(it.key);
+  const ramp = Co.rampTarget(it, S.rows, { bar: S.settings.barKg || 20 }) ? `<button class="mini" data-act="ramp" data-key="${k}">🏋 Opbouw</button>` : '';
+  const blk = coachBlock();
+  const ask = `<button class="mini" data-act="ask" data-key="${k}" ${blk.blocked ? `disabled title="${esc(blk.reason)}"` : ''}>💬 Vraag coach</button>`;
+  return `<div class="pacts">${ramp}${ask}</div>${rampHTML(it)}`;
+}
+
+function coachDayHTML(week, dayIdx, rs) {
+  const k = dayKey(week, dayIdx);
+  const r = S.coach.reactions[k];
+  const busy = S.coach.busy === `react:${k}`;
+  const blk = coachBlock();
+  const any = rs.some((x) => x.actual || x.loggedAt);
+  let card = '';
+  if (busy) card = '<div class="coachcard"><b>🧑‍🏫 Coach</b><p>Denkt na…</p></div>';
+  else if (r) card = `<div class="coachcard"><b>🧑‍🏫 Coach</b><div class="md">${Co.md(r.text)}</div>${r.props ? `<p><small>📝 ${r.props} voorstel(len) om het plan aan te passen — bekijk ze in de chat.</small></p>` : ''}<div class="actions"><button class="btn" data-act="coach-ask-day">${r.props ? 'Bekijk voorstel' : 'Vraag door'}</button><button class="btn link" data-act="coach-redo" ${blk.blocked ? 'disabled' : ''}>Opnieuw</button></div></div>`;
+  else if (any && coachOn()) card = `<div class="coachcard"><b>🧑‍🏫 Coach</b>${S.coach.err && !blk.blocked ? `<p class="errline">${esc(S.coach.err.title)}</p>` : ''}<button class="btn" data-act="coach-redo" ${blk.blocked ? `disabled title="${esc(blk.reason)}"` : ''}>Coach-reactie op deze sessie</button>${blk.blocked ? `<small class="why2">${esc(blk.reason)}</small>` : ''}</div>`;
+  return `${card}<div class="center"><button class="btn link" data-act="share" data-k="day">📤 Deel deze dag met je coach</button></div>`;
+}
+
+function coachHTML() {
+  const c = S.coach, blk = coachBlock(), on = coachOn();
+  const ls = Co.limitState(c.cost, +S.settings.coachLimit);
+  const cost = c.cost && c.cost.month === Co.monthKey() ? c.cost : { usd: 0, n: 0 };
+  let banner = '';
+  if (c.err && !(c.err.kind === 'blocked')) banner = `<div class="err"><b>${esc(c.err.title)}</b><br>${esc(c.err.msg)}<div class="actions" style="margin-top:8px"><button class="btn" data-act="coach-retry">${Co.BLOCKING.has(c.err.kind) ? 'Ik heb het opgelost' : 'Probeer opnieuw'}</button>${c.err.kind === 'credits' || c.err.kind === 'auth' ? '<a class="btn" href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener">Console</a>' : ''}</div></div>`;
+  else if (ls.state === 'over') banner = `<div class="err"><b>Je eigen maandlimiet is bereikt</b><br>Deze maand ${Co.fmtUsd(ls.used)} van ${Co.fmtUsd(+S.settings.coachLimit)}. Verhoog de limiet in ⚙ of wacht tot volgende maand. De coach staat zolang op pauze; loggen werkt gewoon.</div>`;
+  else if (ls.state === 'warn') banner = `<div class="notice"><span>⚠ ${Math.round(ls.pct * 100)}% van je maandlimiet gebruikt (${Co.fmtUsd(ls.used)} van ${Co.fmtUsd(+S.settings.coachLimit)}).</span></div>`;
+  const dis = blk.blocked || c.busy ? 'disabled' : '';
+  const share = `<div class="row2"><button class="btn" data-act="share" data-k="day">📤 Deel dag</button><button class="btn" data-act="share" data-k="week">📤 Deel week</button></div>${S.settings.coachUrl ? `<a class="btn link center" href="${esc(S.settings.coachUrl)}" target="_blank" rel="noopener">Open coach-project ↗</a>` : ''}`;
+  if (!on) {
+    return `<div class="coachpage"><div class="setup"><h1>Coach</h1><p>De coach in de app is optioneel. Zonder API-sleutel kun je je training delen met je coach in Claude: tik op "Deel", plak in je project en je krijgt hetzelfde advies.</p>${share}<p class="hint">Wil je de coach in de app zelf? Voeg je eigen API-sleutel toe in ⚙ Instellingen → Coach.</p></div></div>`;
+  }
+  const chat = c.chat.map((m, mi) => `<div class="msg ${m.role}">${m.label ? `<small>${esc(m.label)}</small>` : m.role === 'user' ? `${m.nImg ? `<small>📎 ${m.nImg} beeld(en)</small>` : ''}${Co.md(m.shown ?? m.content)}` : ''}${m.role === 'assistant' ? `<div class="md">${Co.md(m.content)}</div>` : ''}${(m.props || []).map((p, pi) => propHTML(mi, pi, p)).join('')}</div>`).join('');
+  const prop = c.memProposal ? `<div class="coachcard"><b>🧠 De coach wil dit onthouden</b>${c.memProposal.map((m) => `<p><small>${esc(m.status)}</small> <b>${esc(m.sectie)}</b>: ${esc(m.inhoud)}</p>`).join('')}<div class="actions"><button class="btn primary" data-act="mem-save">Bewaar</button><button class="btn" data-act="mem-drop">Negeer</button></div><small class="hint">Wijzigingen aan vrijgaves of blessures staan als "voorstel" tot jij ze bevestigt.</small></div>` : '';
+  const know = (c.memory || []).map((m, i) => `<p><b>${esc(m.sectie)}</b> <small>${esc(m.bijgewerkt)}</small><br>${esc(m.inhoud)} <button class="btn link" data-act="mem-wrong" data-i="${i}">Dit klopt niet</button></p>`).join('') || '<p class="note">Nog niets onthouden. Na een weekoverzicht stelt de coach voor wat hij bewaart.</p>';
+  const profVals = Object.fromEntries((c.profile || []).map((p) => [p.veld, p.inhoud]));
+  const profForm = Co.PROFILE_FIELDS.map(([v, hint], i) => `<label>${esc(v)}<textarea id="cp-${i}" rows="2" placeholder="${esc(hint)}">${esc(profVals[v] || '')}</textarea></label>`).join('');
+  return `<div class="coachpage">${banner}
+    <div class="row2"><button class="btn" data-act="coach-day" ${dis} ${blk.blocked ? `title="${esc(blk.reason)}"` : ''}>Reactie op vandaag</button><button class="btn" data-act="coach-week" ${dis}>Weekoverzicht</button></div>
+    ${blk.blocked && !(c.err && !(c.err.kind === 'blocked')) ? `<p class="hintline">${esc(blk.reason)}</p>` : ''}
+    ${prop}
+    <div class="chat">${chat || '<p class="note">Stel een vraag, vraag uitleg over een oefening of een opbouw, of tik hierboven.</p>'}${c.busy === 'chat' || c.busy === 'week' || c.busy === 'media' || c.busy.startsWith('react') ? '<div class="msg assistant"><small>De coach denkt na…</small></div>' : ''}</div>
+    <div class="chips"><button data-act="coach-chip" data-t="Leg uit hoe ik deze oefening uitvoer: ">Leg uit</button><button data-act="coach-chip" data-t="Maak een opbouw (ramp) naar ">Opbouw</button><button data-act="coach-chip" data-t="Welk alternatief heb ik bij pijn aan ">Alternatief</button></div>
+ ${c.att.length ? `<div class="thumbs">${c.att.map((a, i) => `<span class="thumb"><img src="${a.thumb}" alt=""><button data-act="att-del" data-i="${i}" aria-label="Verwijder">✕</button>${a.kind === 'frame' ? `<small>${a.t}s</small>` : ''}</span>`).join('')}</div><p class="hintline">${c.att.length} beeld(en) gaan mee met je volgende vraag (±${Math.round(c.att.length * 0.8)}k tokens extra). Video: je coach ziet frames, geen snelheid.</p>` : ''}
+    <label class="btn attach ${dis ? 'off' : ''}">📎 Foto of video<input id="cfile" type="file" accept="image/*,video/*" multiple hidden ${dis}></label>
+    <div class="askbox"><textarea id="cdraft" rows="2" placeholder="Vraag aan je coach…">${esc(c.draft)}</textarea><button class="btn primary" data-act="coach-send" ${dis}>Stuur</button></div>
+    ${share}
+    <details><summary>Wat de coach weet</summary>${know}</details>
+    <details><summary>Mijn profiel</summary><div class="form" style="border:0;padding:0">${profForm}<button class="btn primary" data-act="prof-save">Profiel bewaren</button></div></details>
+    <p class="hintline">Deze maand: ${Co.fmtUsd(cost.usd)} · ${cost.n} aanvragen${+S.settings.coachLimit > 0 ? ` · limiet ${Co.fmtUsd(+S.settings.coachLimit)}` : ''} · ${esc(S.settings.coachModel)} · de coach doet voorstellen, hij past niets zelf aan.</p></div>`;
+}
+
 // ---------- events ----------
 function readSettingsForm() {
   const g = (id) => document.getElementById(id);
@@ -661,6 +997,13 @@ function readSettingsForm() {
   if (g('f-bar')) S.settings.barKg = +g('f-bar').value === 15 ? 15 : 20;
   if (g('f-timers')) S.settings.timers = g('f-timers').checked;
   if (g('f-autonext')) S.settings.autoNext = g('f-autonext').checked;
+  if (g('f-ckey')) S.settings.coachKey = g('f-ckey').value.trim();
+  if (g('f-cmodel')) S.settings.coachModel = g('f-cmodel').value;
+  if (g('f-clang')) S.settings.coachLang = g('f-clang').value === 'en' ? 'en' : 'nl';
+  if (g('f-climit')) S.settings.coachLimit = Math.max(0, +g('f-climit').value || 0);
+  if (g('f-curl')) S.settings.coachUrl = g('f-curl').value.trim();
+  if (g('f-cauto')) S.settings.coachAuto = g('f-cauto').checked;
+  if (g('f-clog')) S.settings.coachLog = g('f-clog').checked;
 }
 
 async function connect() {
@@ -735,23 +1078,43 @@ $app.addEventListener('click', (e) => {
     case 'settings-close': S.showSettings = false; render(); break;
     case 'settings-save': finishSettings(); break;
     case 'connect': connect(); break;
-    case 'page': S.page = b.dataset.p; render(); window.scrollTo(0, 0); if (S.page === 'records') refreshExtras(); break;
+    case 'page': S.page = b.dataset.p; render(); window.scrollTo(0, 0); if (S.page === 'records') refreshExtras(); if (S.page === 'coach') coachLoad(); break;
     case 'tab-newest': { const n = Sh.cycleTabs(S.tabs)[0]; if (n) { S.settings.autoTab = true; switchTab(n, false); } break; }
     case 'rec': S.recOpen = S.recOpen === b.dataset.id ? '' : b.dataset.id; { const el = document.getElementById('reclist'); if (el) el.innerHTML = recListHTML(); } break;
     case 'recfilter': S.recFilter = b.dataset.v; render(); break;
     case 'extras': refreshExtras(true); break;
+    case 'share': shareWithCoach(b.dataset.k); break;
+    case 'ramp': S.coach.ramp[key] = !S.coach.ramp[key]; render(); break;
+    case 'ask': { const it = currentItem(key); S.coach.draft = `Over "${it.piece}" (${it.prescribed}): `; S.page = 'coach'; render(); window.scrollTo(0, document.body.scrollHeight); document.getElementById('cdraft')?.focus(); coachLoad(); break; }
+    case 'coach-day': coachReact(S.view.week, S.view.dayIdx).then(() => window.scrollTo(0, document.body.scrollHeight)); break;
+    case 'coach-redo': coachReact(S.view.week, S.view.dayIdx); break;
+    case 'coach-ask-day': S.coach.draft = ''; S.page = 'coach'; render(); document.getElementById('cdraft')?.focus(); coachLoad(); break;
+    case 'coach-week': coachWeek(); break;
+    case 'coach-send': coachSend(); break;
+    case 'coach-retry': S.coach.err = null; render(); break;
+    case 'coach-chip': S.coach.draft = (S.coach.draft ? `${S.coach.draft.trim()} ` : '') + b.dataset.t; render(); { const t = document.getElementById('cdraft'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } } break;
+    case 'mem-save': saveMemory(S.coach.memProposal); break;
+    case 'mem-drop': S.coach.memProposal = null; render(); break;
+    case 'mem-wrong': { const m = S.coach.memory[+b.dataset.i]; if (m && window.confirm(`"${m.sectie}" uit het geheugen verwijderen?`)) saveMemory(S.coach.memory.filter((_, i) => i !== +b.dataset.i).map((x) => ({ ...x, status: 'gelijk' }))); break; }
+    case 'prof-save': saveProfile(); break;
+    case 'att-del': S.coach.att.splice(+b.dataset.i, 1); render(); break;
+    case 'prop-apply': proposalAct(+b.dataset.m, +b.dataset.p, 'apply'); break;
+    case 'prop-reject': proposalAct(+b.dataset.m, +b.dataset.p, 'reject'); break;
+    case 'prop-undo': proposalAct(+b.dataset.m, +b.dataset.p, 'undo'); break;
     case 'logout': Api.signOut(); S.showSettings = false; setSync('login'); render(); break;
   }
 });
 
 $app.addEventListener('change', (e) => {
   const el = e.target;
+  if (el.id === 'cfile') { const fs = [...el.files]; el.value = ''; if (fs.length) addFiles(fs); return; }
   if (el.id === 'tabsel') switchTab(el.value, true);
   else if (el.id === 'f-tab') { readSettingsForm(); render(); }
 });
 
 $app.addEventListener('input', (e) => {
   if (e.target.id === 'recq') { S.recQ = e.target.value; const el = document.getElementById('reclist'); if (el) el.innerHTML = recListHTML(); return; }
+  if (e.target.id === 'cdraft') { S.coach.draft = e.target.value; return; }
   const el = e.target; const f = el.dataset?.f; if (!f) return;
   const form = el.closest('[data-form]'); if (!form) return;
   const d = S.drafts[form.dataset.form]; if (!d) return;
