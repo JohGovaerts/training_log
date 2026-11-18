@@ -22,7 +22,7 @@ const ALIASES = {
   actual: ['actual'], splits: ['rep splits'], rpe: ['rpe'], badDay: ['bad day'],
   pain: ['pain notes'], notes: ['notes'],
   loggedAt: ['gelogd op'], start: ['start'], end: ['einde'], dur: ['duur (min)', 'duur'],
-  sStart: ['sessie start'], sEnd: ['sessie einde'], readiness: ['readiness'],
+  sStart: ['sessie start'], sEnd: ['sessie einde'], readiness: ['readiness'], polar: ['polar'],
 };
 // Columns the app adds (to the right of the existing ones) when missing.
 export const APP_COLS = {
@@ -30,7 +30,7 @@ export const APP_COLS = {
   sStart: 'Sessie start', sEnd: 'Sessie einde',
 };
 // Added only when first needed (so a sheet that never uses it is left untouched).
-export const LAZY_COLS = { readiness: 'Readiness' };
+export const LAZY_COLS = { readiness: 'Readiness', polar: 'Polar' };
 export function ensureCol(map, newHeaders, key) {
   if (key in map) return;
   const next = Math.max(-1, ...Object.values(map)) + 1;
@@ -83,7 +83,7 @@ export function buildColumnMap(headerRow) {
 }
 
 const FIELDS = ['cycle', 'week', 'dag', 'focus', 'piece', 'benchmark', 'prescribed', 'intent', 'demo', 'actual', 'splits', 'rpe',
-  'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd', 'readiness'];
+  'badDay', 'pain', 'notes', 'loggedAt', 'start', 'end', 'dur', 'sStart', 'sEnd', 'readiness', 'polar'];
 
 export function parseRows(values, headerIdx, map, prefix = '') {
   const rows = [];
@@ -175,7 +175,7 @@ export function planWrites(rows, map, op) {
   } else if (op.type === 'session') {
     const targets = rows.filter((x) => x.week === op.week && x.dayIdx === op.dayIdx);
     if (!targets.length) return null;
-    for (const r of targets) for (const f of ['sStart', 'sEnd', 'readiness']) {
+    for (const r of targets) for (const f of ['sStart', 'sEnd', 'readiness', 'polar']) {
       if (op.fields[f] !== undefined && f in map) cells.push({ row: r.rowNum, col: map[f], field: f, value: op.fields[f] });
     }
   }

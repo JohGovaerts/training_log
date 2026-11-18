@@ -5,6 +5,7 @@ import * as Ld from './loading.js';
 import * as Co from './coach.js';
 import * as TU from './timerui.js'
 import * as In from './insights.js';
+import * as Pl from './polar.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -16,7 +17,7 @@ const LS = {
 };
 
 const S = {
-  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, tmSound: true, tmVol: 1, tmFlash: true, coachQuick: true, readiness: true, ...LS.get('settings', {}) },
+  settings: { clientId: window.LOGAPP_CONFIG?.clientId || '', sheetId: '', sheetTitle: '', tab: '', cycleStarts: {}, ledgerId: '', autoTab: true, timers: true, autoNext: true, barKg: 20, coachKey: '', coachModel: 'claude-sonnet-5-5', coachLang: 'nl', coachLimit: 5, coachUrl: '', coachAuto: true, coachLog: true, tmSound: true, tmVol: 1, tmFlash: true, coachQuick: true, readiness: true, polarUrl: '', polarKey: '', ...LS.get('settings', {}) },
   grids: LS.get('grids', null),         // {tab: {values, ts, sheetId, tab}} last server copy per tab (offline cache)
   grid: null,                           // grid of the active tab
   ledger: LS.get('ledger', null),       // {records, history, ts, ledgerId}
@@ -28,7 +29,7 @@ const S = {
   dismissed: LS.get('dismissed', {}),
   missing: [], cycles: [],
   tabs: [], rows: [], map: null, headerIdx: -1, newHeaders: [], pendingKeys: new Set(),
-  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null,
+  pain: { sel: [], score: '' }, ready: { sl: '', sp: '', st: '' }, extra: null, polarDay: {}, polarAutoAt: {}, polarBusy: '',
   err: '', view: LS.get('view', null), open: {}, editSession: false, showSettings: false,
   sync: { state: 'idle', at: null, msg: '' }, syncing: false, again: false, formErr: '',
   coach: { chat: [], cost: null, reactions: {}, err: null, busy: '', profile: null, memory: null, memTs: 0, memProposal: null, draft: '', ramp: {}, ...LS.get('coach', {}), err: null, busy: '', memProposal: null, ramp: {}, att: [] },
@@ -86,7 +87,7 @@ function rebuild() {
   if (hi < 0) { S.err = 'Geen kopregel gevonden. Dit tabblad moet de kolommen "Week" en "Piece" hebben.'; S.rows = []; S.map = null; return; }
   const { map, newHeaders, missingReq } = Sh.buildColumnMap(g[hi]);
   if (missingReq.length) { S.err = `Kolom(men) ontbreken in de sheet: ${missingReq.join(', ')}`; S.rows = []; S.map = null; return; }
-  if (S.queue.some((o) => (o.tab || S.settings.tab) === S.settings.tab && o.fields && 'readiness' in o.fields)) Sh.ensureCol(map, [], 'readiness');
+  for (const k of Object.keys(Sh.LAZY_COLS)) if (S.queue.some((o) => (o.tab || S.settings.tab) === S.settings.tab && o.fields && k in o.fields)) Sh.ensureCol(map, [], k);
   S.headerIdx = hi; S.map = map; S.newHeaders = newHeaders;
   const base = Sh.parseRows(g, hi, map, `${S.settings.tab}§`);
   for (const op of S.queue.filter((o) => (o.tab || S.settings.tab) === S.settings.tab)) {
@@ -226,16 +227,16 @@ function endSession() {
   if (S.timers.part) pausePartTimer(S.timers.part.key, false);
   S.queue.push({ type: 'session', tab: t.tab || S.settings.tab, week: t.week, dayIdx: t.dayIdx, fields: { sStart: Sh.fmtHM(t.startMs), sEnd: Sh.fmtHM(Date.now()) }, at: Date.now() });
   S.timers.session = null; save.timers(); save.queue();
-  rebuild(); render(); toast('Training afgerond ✓'); kickSync(true);
+  rebuild(); render(); toast('Training afgerond ✓'); kickSync(true); polarAfterEnd();
 }
 function saveSessionTimes(start, end) {
   if (!start || !end) { toast('Vul start en einde in.'); return; }
   S.queue.push({ type: 'session', tab: S.settings.tab, week: S.view.week, dayIdx: S.view.dayIdx, fields: { sStart: start, sEnd: end }, at: Date.now() });
-  S.editSession = false; save.queue(); rebuild(); render(); kickSync(true);
+  S.editSession = false; save.queue(); rebuild(); render(); kickSync(true); polarAfterEnd();
 }
 
 // ---------- sync ----------
-function setSync(state, msg = '') { S.sync = { state, msg, at: state === 'ok' ? Date.now() : S.sync.at }; renderChip(); }
+function setSync(state, msg = '') { S.sync = { state, msg, at: state === 'ok' ? Date.now() : S.sync.at }; renderChip(); if (state === 'ok') setTimeout(() => polarAutoToday(), 300); }
 
 function kickSync(gesture = false) {
   // A click is a user gesture: if the token has expired, refresh it silently via popup now.
@@ -267,7 +268,7 @@ async function syncTab(tab) {
   const hi = Sh.findHeader(values);
   if (hi < 0) { keep(); if (tab === S.settings.tab) { rebuild(); throw new Error(S.err); } return { stuck: 0, added: [], done: 0 }; }
   const { map, newHeaders } = Sh.buildColumnMap(values[hi]);
-  if (S.queue.some((o) => (o.tab || S.settings.tab) === tab && o.fields && 'readiness' in o.fields)) Sh.ensureCol(map, newHeaders, 'readiness');
+  for (const k of Object.keys(Sh.LAZY_COLS)) if (S.queue.some((o) => (o.tab || S.settings.tab) === tab && o.fields && k in o.fields)) Sh.ensureCol(map, newHeaders, k);
   const rows = Sh.parseRows(values, hi, map, `${tab}§`);
   const cells = [], done = [];
   const ops = S.queue.filter((o) => (o.tab || S.settings.tab) === tab);
@@ -414,7 +415,7 @@ function mainHTML() {
   if (!S.rows.length) return topHTML() + `<div class="rest"><b>Nog geen planning geladen</b>${S.sync.state === 'login' ? 'Log in om de sheet te laden.' : 'Even geduld…'}</div>`;
   const { week, dayIdx } = S.view;
   if (S.page === 'week') return topHTML() + weekHTML();
-  return topHTML() + noticeHTML() + painBarHTML() + readyBarHTML() + sessionBannerHTML() + dayHTML(week, dayIdx);
+  return topHTML() + noticeHTML() + painBarHTML() + readyBarHTML() + polarCardHTML(week, dayIdx, rowsOf(week, dayIdx)) + sessionBannerHTML() + dayHTML(week, dayIdx);
 }
 
 function noticeHTML() {
@@ -496,6 +497,7 @@ function dayHTML(week, dayIdx) {
   const timeTxt = tm.planned ? ` · gepland ${tm.planned}'${tm.real != null ? ` · <b class="tm-${In.overTone(tm.planned, tm.real)}">echt ${tm.real}'</b>` : ''}` : '';
   return `<div class="dayhead"><h2>${title}${optional ? '<span class="badge">optioneel</span>' : ''}</h2><p>${esc(focus)} · ${done}/${rs.length} gelogd${timeTxt}</p></div>
     ${(rs.find((r) => r.readiness) || {}).readiness ? `<div class="readyline">🔋 ${esc(rs.find((r) => r.readiness).readiness)}</div>` : ''}
+    ${polarLineHTML(week, dayIdx, rs)}
     <div class="daytools"><button class="btn" data-act="gym-open">🏋 Gym-modus</button><button class="btn" data-act="extra-open">＋ Extra sessie of les</button></div>
     ${sessHTML}${rs.map((r) => pieceHTML(r, S.open[r.key] ?? (firstOpen && firstOpen.key === r.key))).join('')}${coachDayHTML(week, dayIdx, rs)}`;
 }
@@ -692,6 +694,78 @@ function readyAction(a, b) {
   rebuild(); render(); toast('Genoteerd ✓'); kickSync(true);
 }
 
+// ---------- Polar (optioneel) ----------
+function polarLineHTML(week, dayIdx, rs) {
+  if (!Pl.configured(S.settings)) return '';
+  const txt = (rs.find((r) => r.polar && r.polar.trim()) || {}).polar;
+  const d = Sh.dateFor(curStart(), week, dayIdx);
+  if (!d || d > new Date()) return txt ? `<div class="readyline">⌚ ${esc(txt)}</div>` : '';
+  const busy = S.polarBusy === `${week}|${dayIdx}`;
+  return `<div class="polarline">${txt ? `<div class="readyline">⌚ ${esc(txt)}</div>` : ''}<button class="btn" data-act="polar-fetch" ${busy ? 'disabled' : ''}>${busy ? 'Ophalen…' : txt ? '↻ Polar opnieuw ophalen' : '⌚ Polar-gegevens ophalen'}</button></div>`;
+}
+async function polarSync(week, dayIdx, manual) {
+  const d = Sh.dateFor(curStart(), week, dayIdx);
+  if (!d) { if (manual) toast('Vul eerst de startdatum van de cyclus in (⚙).'); return; }
+  const key = `${week}|${dayIdx}`;
+  if (manual) { S.polarBusy = key; render(); }
+  try {
+    const rs = rowsOf(week, dayIdx);
+    const sess = rs.find((r) => r.sStart && r.sEnd) || {};
+    const have = (rs.find((r) => r.polar && r.polar.trim()) || {}).polar || '';
+    const data = await Pl.day(S.settings, Pl.isoDate(d));
+    S.polarDay[Pl.isoDate(d)] = { t: Date.now(), data };
+    const ex = Pl.matchExercise(data.exercises, sess.sStart, sess.sEnd);
+    const text = Pl.polarText(data, ex);
+    if (!manual) {
+      // automatisch: enkel opslaan als het iets nieuws is (herstel nog niet bewaard, of training nu gevonden)
+      if (!text || text === have || (have.includes('Training') && !ex)) { render(); return; }
+    }
+    if (!text) { if (manual) toast('Nog niets gevonden bij Polar. Sync je horloge met Polar Flow en probeer opnieuw.'); return; }
+    if (text !== have) {
+      S.queue.push({ type: 'session', tab: S.settings.tab, week, dayIdx, fields: { polar: text }, at: Date.now() });
+      save.queue(); rebuild(); kickSync(true);
+    }
+    if (manual) toast(ex ? 'Polar opgeslagen ✓' : (sess.sEnd ? 'Herstel opgeslagen, training niet gevonden (sync met Polar Flow en tik ↻)' : 'Herstel opgeslagen ✓'));
+    else if (ex && !have.includes('Training')) toast('Polar-training toegevoegd ✓');
+  } catch (e) { if (manual) toast(e.message || 'Polar ophalen mislukt'); }
+  finally { if (manual) S.polarBusy = ''; render(); }
+}
+const polarFetch = () => polarSync(S.view.week, S.view.dayIdx, true);
+// Automatisch: herstel van vandaag ophalen/bewaren en, na een afgeronde sessie, de training koppelen.
+function polarAutoToday(force = false) {
+  if (!Pl.configured(S.settings) || !S.rows.length || !navigator.onLine) return;
+  const t = Sh.todayPosition(curStart());
+  if (!t || !rowsOf(t.week, t.dayIdx).length) return;
+  const k = `${S.settings.tab}|${t.week}|${t.dayIdx}`;
+  if (!force && Date.now() - (S.polarAutoAt[k] || 0) < 180e3) return;
+  S.polarAutoAt[k] = Date.now();
+  polarSync(t.week, t.dayIdx, false);
+}
+// Na het einde van een training: de watch synct meestal binnen enkele minuten naar Polar Flow.
+function polarAfterEnd() {
+  if (!Pl.configured(S.settings)) return;
+  for (const ms of [90e3, 240e3, 480e3]) setTimeout(() => polarAutoToday(true), ms);
+}
+function polarCardHTML(week, dayIdx, rs) {
+  if (!Pl.configured(S.settings)) return '';
+  const t = Sh.todayPosition(curStart());
+  if (!t || t.week !== week || t.dayIdx !== dayIdx) return '';
+  const e = S.polarDay[Pl.isoDate(new Date())];
+  const lv = e && Pl.recoveryLevel(e.data);
+  if (!lv) return '';
+  const stored = rs.some((r) => r.polar && r.polar.trim());
+  if (lv.level === 'ok' && stored) return '';
+  const untouched = rs.every((r) => Sh.status(r) === 'open');
+  const hint = lv.level === 'low' && untouched ? `<small>Herstel onder je norm (${esc(lv.reasons.join(', '))}). Overweeg lager volume of een lager RPE-doel vandaag.</small>` : '';
+  return `<div class="polarcard ${lv.level}"><b>⌚ Herstel vandaag</b><div>${esc(Pl.recoveryText(e.data))}</div>${hint}</div>`;
+}
+async function polarTest() {
+  readSettingsForm();
+  if (!Pl.configured(S.settings)) return toast('Vul het adres en de code van je Worker in.');
+  try { await Pl.ping(S.settings); save.settings(); toast('Polar-Worker bereikbaar ✓'); }
+  catch (e) { toast(e.message); }
+}
+
 // ---------- extra sessie of les ----------
 function extraHTML() {
   const x = S.extra; if (!x) return '';
@@ -870,6 +944,10 @@ function settingsHTML(first) {
       <label class="toggle"><input type="checkbox" id="f-cquick" ${s.coachQuick !== false ? 'checked' : ''}> Losse vragen met Haiku (goedkoper); vragen met foto of video, reacties en weekoverzicht gebruiken het model hierboven</label>
       <label class="toggle"><input type="checkbox" id="f-cauto" ${s.coachAuto ? 'checked' : ''}> Automatisch coach-reactie na een afgeronde sessie</label>
       <label class="toggle"><input type="checkbox" id="f-clog" ${s.coachLog ? 'checked' : ''}> Reacties en wijzigingen bewaren in tab "Coach log" (je project kan ze lezen)</label></div></details>
+    <details ${Pl.configured(s) ? 'open' : ''}><summary>Polar (optioneel)</summary><div class="coachset">
+      <label>Adres van je Polar-Worker<input id="f-purl" value="${esc(s.polarUrl || '')}" placeholder="https://….workers.dev" autocomplete="off" autocapitalize="off"></label>
+      <label>Toegangscode (APP_KEY)<input id="f-pkey" type="password" value="${esc(s.polarKey || '')}" autocomplete="off" autocapitalize="off"><span class="hint">Blijft alleen op dit toestel. Zonder adres en code doet de app niets met Polar.</span></label>
+      <button class="btn" data-act="polar-test">Test verbinding</button></div></details>
     <button class="btn" data-act="csv">Logboek van dit tabblad exporteren (CSV)</button>
     <button class="btn primary" data-act="settings-save">Opslaan</button>` : ''}
     ${!first ? '<button class="btn" data-act="settings-close">Terug</button><button class="btn link" data-act="logout">Uitloggen</button>' : ''}
@@ -1236,6 +1314,8 @@ function readSettingsForm() {
   if (g('f-curl')) S.settings.coachUrl = g('f-curl').value.trim();
   if (g('f-cauto')) S.settings.coachAuto = g('f-cauto').checked;
   if (g('f-clog')) S.settings.coachLog = g('f-clog').checked;
+  if (g('f-purl')) S.settings.polarUrl = g('f-purl').value.trim();
+  if (g('f-pkey')) S.settings.polarKey = g('f-pkey').value.trim();
 }
 
 async function connect() {
@@ -1310,6 +1390,8 @@ $app.addEventListener('click', (e) => {
     case 'skip': { const d = ensureDraft(currentItem(key)); d.actual = 'Skip'; commitPiece(key); break; }
     case 'ptimer': S.drafts[key]?.tRun ? pausePartTimer(key) : startPartTimer(key); break;
     case 'treset': resetPartTimer(key); break;
+    case 'polar-fetch': polarFetch(); break;
+    case 'polar-test': polarTest(); break;
     case 'sess-start': startSession(); break;
     case 'sess-end': endSession(); break;
     case 'sess-edit': S.editSession = true; render(); break;
