@@ -224,8 +224,8 @@ export function judge({ ratio, badDay, rpe }) {
   const lowerBound = bad || maybe;
   const r = parseFloat(String(rpe ?? '').split('-').pop());
   let tone, label;
-  if (ratio == null) { tone = bad ? 'bad' : 'unknown'; label = bad ? 'slechte dag (zelf aangegeven)' : 'geen vergelijking mogelijk'; }
-  else if (ratio >= 0.98) { tone = 'good'; label = bad ? 'sterk ondanks slechte dag' : 'goede dag'; }
+  if (ratio == null) { tone = bad ? 'bad' : 'unknown'; label = bad ? 'slechte dag (zelf aangegeven)' : maybe ? 'misschien slechte dag (zelf aangegeven)' : 'geen vergelijking mogelijk'; }
+  else if (ratio >= 0.98) { tone = 'good'; label = bad ? 'sterk ondanks slechte dag' : maybe ? 'sterk ondanks mogelijk slechte dag' : 'goede dag'; }
   else if (ratio >= 0.93) { tone = bad ? 'bad' : 'ok'; label = bad ? 'slechte dag' : 'redelijke dag'; }
   else { tone = 'bad'; label = bad ? 'slechte dag' : 'zwakkere dag'; }
   if (ratio != null && ratio >= 0.95 && r && r <= 7) label += ' (voelde licht)';
