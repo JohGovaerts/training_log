@@ -1,6 +1,6 @@
 // Offline shell. Network-first: you always get the newest files when online (so edits to
 // config.js show up immediately); the cache is only the fallback when offline.
-const CACHE = 'logapp-v29';
+const CACHE = 'logapp-v30';
 const SHELL = ['./', 'index.html', 'config.js', 'css/style.css', 'js/app.js', 'js/api.js', 'js/sheet.js', 'js/records.js', 'js/loading.js', 'js/coach.js', 'js/timer.js', 'js/timerui.js', 'js/insights.js', 'js/polar.js', 'manifest.webmanifest', 'icon.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
