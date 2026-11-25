@@ -1320,6 +1320,9 @@ async function coachWeek() {
   setBusy('');
 }
 
+function scrollChatEnd() {                                   // the start of the newest message in view, input just below
+  requestAnimationFrame(() => { const m = [...document.querySelectorAll('.chat > .msg')].pop(); if (m) m.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0); });
+}
 async function coachSend() {
   const att = S.coach.att;
   const text = (S.coach.draft || '').trim() || (att.length ? 'Wat zie je? Geef één fout en één cue.' : '');
@@ -1336,7 +1339,7 @@ async function coachSend() {
     if (e instanceof Co.CoachError && e.info.kind === 'blocked') toast(e.info.msg); else coachFail(e);
   }
   setBusy('');
-  window.scrollTo(0, document.body.scrollHeight);
+  scrollChatEnd();
 }
 
 async function copyText(text) {
@@ -1517,7 +1520,10 @@ function coachHTML() {
   if (!on) {
     return `<div class="coachpage"><div class="setup"><h1>Coach</h1><p>De coach in de app is optioneel. Zonder API-sleutel kun je je training delen met je coach in Claude: tik op "Deel", plak in je project en je krijgt hetzelfde advies.</p>${share}<p class="hint">Wil je de coach in de app zelf? Voeg je eigen API-sleutel toe in ⚙ Instellingen → Coach.</p></div></div>`;
   }
-  const chat = c.chat.map((m, mi) => `<div class="msg ${m.role}">${m.label ? `<small>${esc(m.label)}</small>` : m.role === 'user' ? `${m.nImg ? `<small>📎 ${m.nImg} beeld(en)</small>` : ''}${Co.md(m.shown ?? m.content)}` : ''}${m.role === 'assistant' ? `<div class="md">${Co.md(m.content)}</div>` : ''}${(m.props || []).map((p, pi) => propHTML(mi, pi, p)).join('')}</div>`).join('');
+  const userIdx = c.chat.map((m, i) => (m.role === 'user' ? i : -1)).filter((i) => i >= 0);
+  const KEEP = 3, start = c.chatAll || userIdx.length <= KEEP ? 0 : userIdx[userIdx.length - KEEP];
+  const older = userIdx.length > KEEP ? `<button class="btn link" data-act="chat-older">${c.chatAll ? 'Oudere berichten verbergen' : `Oudere berichten tonen (${userIdx.length - KEEP})`}</button>` : '';
+  const chat = older + c.chat.map((m, mi) => mi < start ? '' : `<div class="msg ${m.role}">${m.label ? `<small>${esc(m.label)}</small>` : m.role === 'user' ? `${m.nImg ? `<small>📎 ${m.nImg} beeld(en)</small>` : ''}${Co.md(m.shown ?? m.content)}` : ''}${m.role === 'assistant' ? `<div class="md">${Co.md(m.content)}</div>` : ''}${(m.props || []).map((p, pi) => propHTML(mi, pi, p)).join('')}</div>`).join('');
   const prop = c.memProposal ? `<div class="coachcard"><b>🧠 De coach wil dit onthouden</b>${c.memProposal.map((m) => `<p><small>${esc(m.status)}</small> <b>${esc(m.sectie)}</b>: ${esc(m.inhoud)}</p>`).join('')}<div class="actions"><button class="btn primary" data-act="mem-save">Bewaar</button><button class="btn" data-act="mem-drop">Negeer</button></div><small class="hint">Wijzigingen aan vrijgaves of blessures staan als "voorstel" tot jij ze bevestigt.</small></div>` : '';
   const know = (c.memory || []).map((m, i) => `<p><b>${esc(m.sectie)}</b> <small>${esc(m.bijgewerkt)}</small><br>${esc(m.inhoud)} <button class="btn link" data-act="mem-wrong" data-i="${i}">Dit klopt niet</button></p>`).join('') || '<p class="note">Nog niets onthouden. Na een weekoverzicht stelt de coach voor wat hij bewaart.</p>';
   const profVals = Object.fromEntries((c.profile || []).map((p) => [p.veld, p.inhoud]));
@@ -1656,7 +1662,8 @@ $app.addEventListener('click', (e) => {
     case 'settings-close': S.showSettings = false; render(); break;
     case 'settings-save': finishSettings(); break;
     case 'connect': connect(); break;
-    case 'page': S.page = b.dataset.p; render(); window.scrollTo(0, 0); if (S.page === 'records') refreshExtras(); if (S.page === 'coach') coachLoad(); break;
+    case 'page': S.page = b.dataset.p; render(); window.scrollTo(0, 0); if (S.page === 'records') refreshExtras(); if (S.page === 'coach') { coachLoad(); scrollChatEnd(); } break;
+    case 'chat-older': S.coach.chatAll = !S.coach.chatAll; render(); break;
     case 'tab-newest': { const n = Sh.cycleTabs(S.tabs)[0]; if (n) { S.settings.autoTab = true; switchTab(n, false); } break; }
     case 'rec': S.recOpen = S.recOpen === b.dataset.id ? '' : b.dataset.id; { const el = document.getElementById('reclist'); if (el) el.innerHTML = recListHTML(); } break;
     case 'recfilter': S.recFilter = b.dataset.v; render(); break;

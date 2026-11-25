@@ -3,7 +3,7 @@
 import * as Ld from './loading.js';
 import * as Sh from './sheet.js';
 
-export const RULES_VERSION = 3;
+export const RULES_VERSION = 4;
 export const MODELS = {
   'claude-sonnet-5-5': { label: 'Sonnet 5.5 (aanbevolen)', inUsd: 2, outUsd: 10 },
   'claude-haiku-5-5': { label: 'Haiku 5.5 (goedkoper)', inUsd: 0.1, outUsd: 0.5 },
@@ -33,6 +33,7 @@ export function systemPrompt({ lang = 'nl', profile = [], memory = [], context =
     'Bij uitleg over oefeningen of opbouw (ramps): concreet, met sets × reps en percentages of RPE, en maximaal één cue per fout.',
     'Bij foto\'s of frames uit een video: je ziet geen snelheid of timing, alleen posities; zeg dat eerlijk. Geef één belangrijkste fout en één cue, bevestig of de standaard gehaald is, en vraag zo nodig een betere hoek of slow-motion.',
     'Zwangerschap (staat in profiel of geheugen)? Dan gaat dit voor al het andere: de uitspraak van arts/vroedvrouw gaat voor het programma, geen maximale pogingen of PR\'s, stuur op RPE (zelf 2–3 reps in reserve), minder val-/impactrisico, geen zware buikbelasting, geen oververhitting. Bereken de zwangerschapsweek uit de uitgerekende datum en de datum van vandaag. Bij bloedverlies, vochtverlies, regelmatige pijnlijke weeën, pijn op de borst, ernstige hoofdpijn, duizeligheid of minder kindsbewegingen: meteen stoppen en arts/vroedvrouw bellen. Geen calorie- of gewichtsadvies. Verwijs voor de volledige zwangerschapsplanning naar het coach-project.',
+    'Bij elk onderdeel kan een "intent" staan: het doel of de afspraak van de planner-coach (bv. een vervolgdoel na een basisdoel). Leg die uit met de plan- en logregels (vorige week, resultaten). Zie je de intent niet of is de bedoeling onduidelijk, zeg dat eerlijk en verzin niets; verwijs dan naar de planner-coach in het project.',
     'Wil je het plan van een nog niet gelogd onderdeel wijzigen? Zet NA je uitleg een blok <voorstel>[{"week":3,"dag":"Za","piece":"exacte pieceNaam uit de context","prescribed":"nieuwe tekst","reden":"korte reden"}]</voorstel>. Alleen voor onderdelen die "(nog niet gelogd)" zijn, nooit voor vrijgaves, en alleen als het echt nodig is. De atleet keurt elk voorstel goed of af.',
   ] : [
     'You are an OPEX-inspired training coach inside one athlete\'s Training Log app. You coach long term: every cycle is a step in a continuous progression.',
@@ -44,6 +45,7 @@ export function systemPrompt({ lang = 'nl', profile = [], memory = [], context =
     'When explaining exercises or build-ups (ramps): be concrete, with sets × reps and percentages or RPE, and at most one cue per fault.',
     'For photos or video frames: you see positions, not speed or timing, and you say so. Give the single most important fault and one cue, confirm whether the standard was met, and ask for a better angle or slow motion if needed.',
     'Pregnancy (in profile or memory)? That overrides everything else: the doctor/midwife\'s advice beats the programme, no maximal attempts or PRs, steer on RPE (2–3 reps in reserve), less fall/impact risk, no heavy abdominal loading, avoid overheating. Compute the week of pregnancy from the due date and today\'s date. With bleeding, fluid leakage, regular painful contractions, chest pain, severe headache, dizziness or reduced fetal movement: stop at once and call the doctor/midwife. No calorie or weight advice. Refer to the coach project for full pregnancy planning.',
+    'A piece may carry an "intent": the planner coach\'s target or agreement (e.g. a follow-up target after a base target). Explain it using the plan and log lines (last week, results). If the intent is missing or unclear, say so honestly and do not guess; point to the planner coach in the project.',
     'To change the plan of a piece that is not logged yet, put AFTER your explanation a block <voorstel>[{"week":3,"dag":"Za","piece":"exact piece name from the context","prescribed":"new text","reden":"short reason"}]</voorstel>. Only for pieces marked "(nog niet gelogd)", never for clearances, and only when really needed. The athlete approves or rejects every proposal.',
   ];
   const prof = profile.filter((p) => p.inhoud).map((p) => `- ${p.veld}: ${p.inhoud}`).join('\n');
@@ -63,10 +65,10 @@ const clip = (s, n = 160) => { s = String(s || '').replace(/\s+/g, ' ').trim(); 
 const DAYS = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
 const logged = (r) => !!(r.actual || r.loggedAt);
 
-export function pieceLine(r, { plan = true } = {}) {
+export function pieceLine(r, { plan = true, intent = false } = {}) {
   const res = [r.actual && `resultaat: ${clip(r.actual, 120)}`, r.splits && `splits: ${clip(r.splits, 60)}`, r.rpe && `RPE ${r.rpe}`,
     r.badDay && /^(ja|misschien)$/i.test(r.badDay) && `slechte dag: ${r.badDay}`, r.pain && `pijn: ${clip(r.pain, 80)}`, r.notes && `notitie: ${clip(r.notes, 100)}`].filter(Boolean);
-  const head = `${r.piece}${plan && r.prescribed ? ` — plan: ${clip(r.prescribed, 120)}` : ''}`;
+  const head = `${r.piece}${plan && r.prescribed ? ` — plan: ${clip(r.prescribed, 120)}` : ''}${intent && r.intent ? ` — intent: ${clip(r.intent, 240)}` : ''}`;
   return `- ${head}${res.length ? ` → ${res.join('; ')}` : logged(r) ? '' : ' → (nog niet gelogd)'}`;
 }
 
@@ -78,18 +80,18 @@ function dayBlock(rows, week, dayIdx, opts) {
   return `${DAYS[dayIdx]} (week ${week}) — ${clip(rs[0].focus, 60)}${ready ? `\nReadiness bij start: ${clip(ready, 80)}` : ''}${polar ? `\nPolar: ${clip(polar, 160)}` : ''}\n${rs.map((r) => pieceLine(r, opts)).join('\n')}`;
 }
 
-export function sessionSummary(rows, week, dayIdx) { return dayBlock(rows, week, dayIdx, { plan: true }); }
+export function sessionSummary(rows, week, dayIdx) { return dayBlock(rows, week, dayIdx, { plan: true, intent: true }); }
 
-export function weekSummary(rows, week) {
+export function weekSummary(rows, week, opts = {}, onlyIntentDay = null) {
   const days = [...new Set(rows.filter((r) => r.week === week).map((r) => r.dayIdx))].sort((a, b) => a - b);
-  return days.map((d) => dayBlock(rows, week, d, { plan: true })).join('\n\n');
+  return days.map((d) => dayBlock(rows, week, d, { plan: true, ...opts, ...(onlyIntentDay != null ? { intent: d === onlyIntentDay } : {}) })).join('\n\n');
 }
 
 export function contextPack({ tab = '', rows = [], week = 1, dayIdx = 0 } = {}) {
   const parts = [`Tabblad: ${tab}. Nu: week ${week}, ${DAYS[dayIdx] || ''}.`];
   const prev = rows.filter((r) => r.week === week - 1 && logged(r));
   if (prev.length) parts.push(`### Vorige week (gelogd)\n${weekSummary(prev, week - 1)}`);
-  const cur = weekSummary(rows, week);
+  const cur = weekSummary(rows, week, {}, dayIdx);          // the intent column only for the day he is looking at
   if (cur) parts.push(`### Week ${week}\n${cur}`);
   const next = rows.filter((r) => r.week === week + 1);
   if (next.length) parts.push(`### Week ${week + 1} (plan)\n${weekSummary(next.map((r) => ({ ...r, actual: '', rpe: '', pain: '', notes: '', splits: '' })), week + 1).split('\n').slice(0, 24).join('\n')}`);
@@ -103,7 +105,7 @@ export const sessionDone = (rows, week, dayIdx) => {
 
 // ---------- share text (Fase 1: no key needed) ----------
 export function shareText({ tab, kind = 'day', rows, week, dayIdx }) {
-  const body = kind === 'week' ? weekSummary(rows, week) : sessionSummary(rows, week, dayIdx);
+  const body = kind === 'week' ? weekSummary(rows, week, { intent: true }) : sessionSummary(rows, week, dayIdx);
   const ask = kind === 'week'
     ? 'Maak een weekoverzicht: wat ging goed, aandachtspunten, en wat stel je voor voor volgende week?'
     : 'Geef me je coachreactie op deze sessie: wat ging goed, één aandachtspunt, en welke aanpassing stel je voor?';
